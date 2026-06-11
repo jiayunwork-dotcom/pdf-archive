@@ -1,0 +1,109 @@
+rules:
+  - name: high_value_invoice
+    priority: 10
+    conditions:
+      - field: doc_type
+        operator: eq
+        value: invoice
+      - field: amount
+        operator: gte
+        value: 10000
+    actions:
+      - type: copy_to
+        target: "{type}/high_value/{year}/{month}/{type}_{invoice_no}.pdf"
+      - type: tag
+        tag: high_value
+      - type: notify
+        message: "高金额发票(>=10000): {file_name}"
+
+  - name: low_confidence_review
+    priority: 20
+    conditions:
+      - or_group:
+          - field: confidence
+            operator: lt
+            value: 0.6
+          - field: doc_type
+            operator: eq
+            value: unknown
+    actions:
+      - type: tag
+        tag: need_review
+      - type: notify
+        message: "低置信度或未知类型文档需要人工复核: {file_name}"
+
+  - name: contract_by_year
+    priority: 30
+    conditions:
+      - field: doc_type
+        operator: eq
+        value: contract
+    actions:
+      - type: move_to
+        target: "contract/{year}/{month}/contract_{contract_no}.pdf"
+      - type: tag
+        tag: dispatched
+
+  - name: invoice_standard
+    priority: 40
+    conditions:
+      - field: doc_type
+        operator: eq
+        value: invoice
+    actions:
+      - type: move_to
+        target: "invoice/{year}/{month}/invoice_{invoice_no}.pdf"
+      - type: tag
+        tag: dispatched
+
+  - name: report_tagging
+    priority: 50
+    conditions:
+      - field: doc_type
+        operator: eq
+        value: report
+    actions:
+      - type: tag
+        tag: report
+      - type: set_field
+        field: dispatch_status
+        value: tagged
+
+  - name: large_file_flag
+    priority: 60
+    conditions:
+      - field: file_size
+        operator: gt
+        value: 10485760
+    actions:
+      - type: tag
+        tag: large_file
+      - type: notify
+        message: "大文件(>10MB): {file_name}"
+
+  - name: specific_vendor_invoice
+    priority: 5
+    conditions:
+      - field: doc_type
+        operator: eq
+        value: invoice
+      - field: vendor_name
+        operator: contains
+        value: "科技有限公司"
+    actions:
+      - type: copy_to
+        target: "invoice/vendor/{vendor_name}/{year}/{type}_{invoice_no}.pdf"
+      - type: tag
+        tag: tech_vendor
+      - type: set_field
+        field: vendor_category
+        value: tech
+
+  - name: default
+    priority: 999
+    conditions: []
+    actions:
+      - type: tag
+        tag: unmatched
+      - type: notify
+        message: "该文件未命中任何分发规则"

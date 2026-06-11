@@ -58,7 +58,8 @@ func (s *Storage) initSchema() error {
 		archive_path TEXT,
 		status TEXT,
 		processed_at DATETIME,
-		duration_ms INTEGER DEFAULT 0
+		duration_ms INTEGER DEFAULT 0,
+		tags TEXT DEFAULT ''
 	);
 	CREATE INDEX IF NOT EXISTS idx_docs_type ON documents(doc_type);
 	CREATE INDEX IF NOT EXISTS idx_docs_md5 ON documents(md5);
@@ -74,7 +75,23 @@ func (s *Storage) initSchema() error {
 	CREATE INDEX IF NOT EXISTS idx_classifiers_type ON classifiers(doc_type);
 	`
 	_, err := s.db.Exec(schema)
-	return err
+	if err != nil {
+		return err
+	}
+	return s.migrate()
+}
+
+func (s *Storage) migrate() error {
+	var colCount int
+	row := s.db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('documents') WHERE name='tags'`)
+	row.Scan(&colCount)
+	if colCount == 0 {
+		_, err := s.db.Exec(`ALTER TABLE documents ADD COLUMN tags TEXT DEFAULT ''`)
+		if err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *Storage) GetRecord(md5 string) (*models.PipelineRecord, error) {
@@ -325,10 +342,11 @@ type DoneDocument struct {
 	Confidence   float64
 	Fields       map[string]models.ExtractedField
 	ArchivePath  string
+	Tags         string
 }
 
 func (s *Storage) ListDoneDocuments() ([]DoneDocument, error) {
-	rows, err := s.db.Query(`SELECT file_id, file_path, md5, doc_type, confidence, fields_json, archive_path
+	rows, err := s.db.Query(`SELECT file_id, file_path, md5, doc_type, confidence, fields_json, archive_path, COALESCE(tags,'')
 		FROM documents WHERE status = 'done'`)
 	if err != nil {
 		return nil, err
@@ -340,7 +358,7 @@ func (s *Storage) ListDoneDocuments() ([]DoneDocument, error) {
 		var d DoneDocument
 		var fieldsJSON string
 		var docType, archivePath sql.NullString
-		err := rows.Scan(&d.FileID, &d.FilePath, &d.MD5, &docType, &d.Confidence, &fieldsJSON, &archivePath)
+		err := rows.Scan(&d.FileID, &d.FilePath, &d.MD5, &docType, &d.Confidence, &fieldsJSON, &archivePath, &d.Tags)
 		if err != nil {
 			return nil, err
 		}
@@ -382,4 +400,75 @@ func (s *Storage) GetAllClassifiers() (map[string]string, error) {
 		}
 	}
 	return result, nil
+}
+
+func (s *Storage) GetTags(fileID string) (string, error) {
+	row := s.db.QueryRow(`SELECT COALESCE(tags,'') FROM documents WHERE file_id = ?`, fileID)
+	var tags string
+	err := row.Scan(&tags)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return tags, err
+}
+
+func (s *Storage) UpdateTags(fileID, tags string) error {
+	_, err := s.db.Exec(`UPDATE documents SET tags = ? WHERE file_id = ?`, tags, fileID)
+	return err
+}
+
+func (s *Storage) SetField(fileID, fieldName string, value interface{}) error {
+	row := s.db.QueryRow(`SELECT fields_json FROM documents WHERE file_id = ?`, fileID)
+	var fieldsJSON string
+	if err := row.Scan(&fieldsJSON); err != nil {
+		return err
+	}
+	fields := make(map[string]models.ExtractedField)
+	if fieldsJSON != "" {
+		_ = json.Unmarshal([]byte(fieldsJSON), &fields)
+	}
+	fields[fieldName] = models.ExtractedField{
+		Name:       fieldName,
+		Value:      value,
+		Confidence: 1.0,
+		Method:     "dispatch",
+	}
+	updatedJSON, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE documents SET fields_json = ? WHERE file_id = ?`, string(updatedJSON), fileID)
+	return err
+}
+
+func (s *Storage) ListAllDocuments() ([]DoneDocument, error) {
+	rows, err := s.db.Query(`SELECT file_id, file_path, md5, doc_type, confidence, fields_json, archive_path, COALESCE(tags,'')
+		FROM documents`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []DoneDocument
+	for rows.Next() {
+		var d DoneDocument
+		var fieldsJSON string
+		var docType, archivePath sql.NullString
+		err := rows.Scan(&d.FileID, &d.FilePath, &d.MD5, &docType, &d.Confidence, &fieldsJSON, &archivePath, &d.Tags)
+		if err != nil {
+			return nil, err
+		}
+		if docType.Valid {
+			d.DocType = docType.String
+		}
+		if archivePath.Valid {
+			d.ArchivePath = archivePath.String
+		}
+		d.Fields = make(map[string]models.ExtractedField)
+		if fieldsJSON != "" {
+			_ = json.Unmarshal([]byte(fieldsJSON), &d.Fields)
+		}
+		results = append(results, d)
+	}
+	return results, rows.Err()
 }

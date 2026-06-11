@@ -197,3 +197,67 @@ type SummaryReport struct {
 	GeneratedAt    time.Time      `json:"generated_at"`
 	ReportPath     string         `json:"report_path,omitempty"`
 }
+
+type DispatchRuleConfig struct {
+	Name       string               `yaml:"name"`
+	Priority   int                  `yaml:"priority"`
+	Conditions []DispatchCondition  `yaml:"conditions"`
+	Actions    []DispatchAction     `yaml:"actions"`
+}
+
+type DispatchCondition struct {
+	Field    string               `yaml:"field"`
+	Operator string               `yaml:"operator"`
+	Value    interface{}          `yaml:"value"`
+	OrGroup  []DispatchCondition  `yaml:"or_group,omitempty"`
+}
+
+type DispatchAction struct {
+	Type     string `yaml:"type"`
+	Target   string `yaml:"target,omitempty"`
+	Tag      string `yaml:"tag,omitempty"`
+	Message  string `yaml:"message,omitempty"`
+	Field    string `yaml:"field,omitempty"`
+	Value    string `yaml:"value,omitempty"`
+}
+
+type DispatchRulesConfig struct {
+	Rules []DispatchRuleConfig `yaml:"rules"`
+}
+
+type DispatchDocContext struct {
+	FileID     string
+	FilePath   string
+	MD5        string
+	DocType    string
+	Confidence float64
+	Fields     map[string]ExtractedField
+	ArchivePath string
+	Tags       string
+	FileSize   int64
+	PageCount  int
+	FileName   string
+}
+
+type DispatchActionResult struct {
+	ActionType string
+	Detail     string
+	Error      string
+}
+
+type DispatchDocResult struct {
+	FileID       string
+	FileName     string
+	RuleName     string
+	Matched      bool
+	Actions      []DispatchActionResult
+	Errors       []string
+}
+
+type DispatchSummary struct {
+	Total     int
+	Matched   int
+	Unmatched int
+	Errors    int
+	Details   []DispatchDocResult
+}

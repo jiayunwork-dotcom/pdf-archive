@@ -14,6 +14,7 @@ import (
 
 	"pdf-archive/internal/classifier"
 	"pdf-archive/internal/config"
+	"pdf-archive/internal/dispatcher"
 	"pdf-archive/internal/pipeline"
 	"pdf-archive/internal/rearchive"
 	"pdf-archive/internal/search"
@@ -61,6 +62,7 @@ func main() {
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(trainCmd())
 	rootCmd.AddCommand(rearchiveCmd())
+	rootCmd.AddCommand(dispatchCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -724,6 +726,129 @@ func printSummary(s *models.SummaryReport, elapsed time.Duration) {
 
 	if s.ReportPath != "" {
 		fmt.Printf("\n📄 处理报告: %s\n", s.ReportPath)
+	}
+}
+
+func dispatchCmd() *cobra.Command {
+	var (
+		rulesFile  string
+		dryRunFlag bool
+		filterType string
+		filterRule string
+	)
+
+	cmd := &cobra.Command{
+		Use:   "dispatch",
+		Short: "按规则引擎分发文档",
+		Long: `读取YAML规则配置文件中定义的分发规则,对已索引的文档逐条匹配规则,命中的执行对应动作。
+支持 --dry-run 只匹配不执行, --filter-type 过滤文档类型, --filter-rule 指定规则名。`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return fmt.Errorf("加载配置失败: %w", err)
+			}
+
+			if rulesFile == "" {
+				return fmt.Errorf("请通过 --rules 指定规则配置文件路径")
+			}
+
+			printBanner("规则引擎分发")
+			fmt.Printf("📋 规则配置: %s\n", rulesFile)
+			fmt.Printf("🗄️  数据库: %s\n", cfg.Storage.DBPath)
+			fmt.Printf("📦 归档目录: %s\n", cfg.Archive.TargetDir)
+			if dryRunFlag {
+				fmt.Println("🔍 DRY RUN模式 - 只匹配不执行动作")
+			}
+			if filterType != "" {
+				fmt.Printf("📂 过滤文档类型: %s\n", filterType)
+			}
+			if filterRule != "" {
+				fmt.Printf("📌 过滤规则名: %s\n", filterRule)
+			}
+			fmt.Println()
+
+			store, err := storage.New(cfg.Storage.DBPath)
+			if err != nil {
+				return fmt.Errorf("打开数据库失败: %w", err)
+			}
+			defer store.Close()
+
+			d, err := dispatcher.New(cfg, store, rulesFile, dryRunFlag)
+			if err != nil {
+				return fmt.Errorf("初始化规则引擎失败: %w", err)
+			}
+
+			opts := dispatcher.DispatchOptions{
+				FilterType: filterType,
+				FilterRule: filterRule,
+			}
+
+			summary, err := d.Run(opts)
+			if err != nil {
+				return fmt.Errorf("分发执行失败: %w", err)
+			}
+
+			printDispatchResult(summary, dryRunFlag)
+			return nil
+		},
+	}
+	cmd.Flags().StringVarP(&rulesFile, "rules", "r", "", "规则配置文件路径 (YAML)")
+	cmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "只匹配规则不执行动作")
+	cmd.Flags().StringVar(&filterType, "filter-type", "", "只处理指定文档类型")
+	cmd.Flags().StringVar(&filterRule, "filter-rule", "", "只应用指定名称的规则")
+	return cmd
+}
+
+func printDispatchResult(s *models.DispatchSummary, isDryRun bool) {
+	mode := ""
+	if isDryRun {
+		mode = " [DRY RUN]"
+	}
+	printBanner(fmt.Sprintf("分发完成%s", mode))
+
+	fmt.Printf("📊 汇总:\n")
+	fmt.Printf("   📄 总文档数: %d\n", s.Total)
+	fmt.Printf("   ✅ 命中规则: %d\n", s.Matched)
+	fmt.Printf("   ⏭️  未命中:   %d\n", s.Unmatched)
+	fmt.Printf("   ❌ 错误:     %d\n", s.Errors)
+	fmt.Println()
+
+	if len(s.Details) > 0 {
+		fmt.Printf("📋 匹配明细%s:\n", mode)
+		fmt.Printf("   %-30s  %-20s  %-10s  %s\n", "文件名", "命中规则", "状态", "动作/错误")
+		fmt.Printf("   %s\n", strings.Repeat("─", 100))
+
+		for _, d := range s.Details {
+			status := "✅ 命中"
+			if !d.Matched {
+				status = "⏭️  未命中"
+			}
+			ruleName := d.RuleName
+			if ruleName == "" {
+				ruleName = "-"
+			}
+			actionInfo := ""
+			if len(d.Actions) > 0 {
+				var parts []string
+				for _, a := range d.Actions {
+					if a.Error != "" {
+						parts = append(parts, fmt.Sprintf("%s[错误:%s]", a.ActionType, a.Error))
+					} else {
+						parts = append(parts, fmt.Sprintf("%s(%s)", a.ActionType, a.Detail))
+					}
+				}
+				actionInfo = strings.Join(parts, "; ")
+			}
+			if len(d.Errors) > 0 && len(d.Actions) == 0 {
+				actionInfo = "错误: " + strings.Join(d.Errors, "; ")
+			}
+
+			fileName := d.FileName
+			if len(fileName) > 28 {
+				fileName = fileName[:25] + "..."
+			}
+			fmt.Printf("   %-30s  %-20s  %-10s  %s\n", fileName, ruleName, status, actionInfo)
+		}
 	}
 }
 

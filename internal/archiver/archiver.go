@@ -103,7 +103,7 @@ func (a *Archiver) Archive(
 }
 
 func (a *Archiver) ComputeTargetPath(srcPath string, fields map[string]models.ExtractedField, classResult *models.ClassificationResult) string {
-	variables := a.buildVariables(fields, classResult)
+	variables := a.BuildVariablesMap(fields, classResult)
 	template := a.getArchiveTemplate(classResult)
 	a.fillSmartDefaults(variables, classResult)
 
@@ -119,6 +119,10 @@ func (a *Archiver) ComputeTargetPath(srcPath string, fields map[string]models.Ex
 	targetPath := filepath.Join(a.cfg.Archive.TargetDir, targetRelPath)
 	targetPath = filepath.Clean(targetPath)
 	return targetPath
+}
+
+func (a *Archiver) BuildVariablesMap(fields map[string]models.ExtractedField, classResult *models.ClassificationResult) map[string]string {
+	return a.buildVariables(fields, classResult)
 }
 
 func (a *Archiver) getArchiveTemplate(classResult *models.ClassificationResult) string {
