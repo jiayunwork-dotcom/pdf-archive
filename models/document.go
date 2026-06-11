@@ -195,4 +195,5 @@ type SummaryReport struct {
 	ArchiveCount   int            `json:"archive_count"`
 	UnsortedCount  int            `json:"unsorted_count"`
 	GeneratedAt    time.Time      `json:"generated_at"`
+	ReportPath     string         `json:"report_path,omitempty"`
 }

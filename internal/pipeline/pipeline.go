@@ -14,6 +14,7 @@ import (
 	"pdf-archive/internal/config"
 	"pdf-archive/internal/extractor"
 	"pdf-archive/internal/pdfparser"
+	"pdf-archive/internal/report"
 	"pdf-archive/internal/storage"
 	"pdf-archive/internal/utils"
 	"pdf-archive/internal/validator"
@@ -40,6 +41,8 @@ type Pipeline struct {
 	unsorted    int64
 	typeCount   map[models.DocType]int64
 	startTime   time.Time
+	results     []*models.DocumentResult
+	inputDir    string
 }
 
 func New(cfg *config.Config) (*Pipeline, error) {
@@ -79,6 +82,7 @@ type fileJob struct {
 
 func (p *Pipeline) Run(ctx context.Context, inputDir string) (*models.SummaryReport, error) {
 	p.startTime = time.Now()
+	p.inputDir = inputDir
 
 	if inputDir == "" {
 		inputDir = p.cfg.Pipeline.InputDir
@@ -144,7 +148,19 @@ func (p *Pipeline) Run(ctx context.Context, inputDir string) (*models.SummaryRep
 
 	p.runWorkers(ctx, jobs)
 
-	return p.buildSummary(), nil
+	summary := p.buildSummary()
+
+	if p.cfg.Stages.Report {
+		reportPath, err := p.generateReport(summary)
+		if err != nil {
+			p.logWarn("生成处理报告失败: %v", err)
+		} else if reportPath != "" {
+			p.logInfo("处理报告已生成: %s", reportPath)
+			summary.ReportPath = reportPath
+		}
+	}
+
+	return summary, nil
 }
 
 func (p *Pipeline) runWorkers(ctx context.Context, jobs []fileJob) {
@@ -348,6 +364,11 @@ func (p *Pipeline) recordResult(job fileJob, result *models.DocumentResult) {
 		}
 		p.mu.Lock()
 		p.typeCount[result.Classification.Type]++
+		p.results = append(p.results, result)
+		p.mu.Unlock()
+	} else {
+		p.mu.Lock()
+		p.results = append(p.results, result)
 		p.mu.Unlock()
 	}
 	if result.Validation != nil && result.Validation.NeedReviewCount > 0 {
@@ -397,4 +418,21 @@ func (p *Pipeline) TrainClassifier(samples map[string][]string) error {
 
 func (p *Pipeline) GetStore() *storage.Storage {
 	return p.store
+}
+
+func (p *Pipeline) generateReport(summary *models.SummaryReport) (string, error) {
+	p.mu.Lock()
+	resultsCopy := make([]*models.DocumentResult, len(p.results))
+	copy(resultsCopy, p.results)
+	p.mu.Unlock()
+
+	data := &report.ReportData{
+		Summary:     summary,
+		Results:     resultsCopy,
+		InputDir:    p.inputDir,
+		ArchiveDir:  p.cfg.Archive.TargetDir,
+		DryRun:      p.cfg.Pipeline.DryRun,
+		GeneratedAt: time.Now(),
+	}
+	return report.WriteReport(data)
 }

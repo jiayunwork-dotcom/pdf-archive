@@ -15,6 +15,7 @@ import (
 	"pdf-archive/internal/classifier"
 	"pdf-archive/internal/config"
 	"pdf-archive/internal/pipeline"
+	"pdf-archive/internal/rearchive"
 	"pdf-archive/internal/search"
 	"pdf-archive/internal/storage"
 	"pdf-archive/internal/utils"
@@ -59,6 +60,7 @@ func main() {
 	rootCmd.AddCommand(searchCmd())
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(trainCmd())
+	rootCmd.AddCommand(rearchiveCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
@@ -536,6 +538,104 @@ func loadTrainingSamples(root string) (map[string][]string, error) {
 	return samples, nil
 }
 
+func rearchiveCmd() *cobra.Command {
+	var rearchiveDryRun bool
+
+	cmd := &cobra.Command{
+		Use:   "rearchive",
+		Short: "批量重归档: 按最新配置重新计算归档路径并迁移文件",
+		Long: `对已索引的文档重新计算归档路径并执行文件迁移。
+只处理 status=done 的文档记录, 其他状态跳过。
+支持 --dry-run 参数预览将要执行的变更而不实际移动。`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := loadConfig()
+			if err != nil {
+				return fmt.Errorf("加载配置失败: %w", err)
+			}
+
+			if rearchiveDryRun {
+				cfg.Pipeline.DryRun = true
+			}
+
+			printBanner("批量重归档")
+			fmt.Printf("📦 归档目录: %s\n", cfg.Archive.TargetDir)
+			fmt.Printf("🗄️  数据库: %s\n", cfg.Storage.DBPath)
+			fmt.Printf("📝 归档模板: %s\n", cfg.Archive.PathTemplate)
+			if cfg.Pipeline.DryRun {
+				fmt.Println("🔍 DRY RUN模式 - 不会实际移动文件")
+			}
+			fmt.Println()
+
+			store, err := storage.New(cfg.Storage.DBPath)
+			if err != nil {
+				return fmt.Errorf("打开数据库失败: %w", err)
+			}
+			defer store.Close()
+
+			ra := rearchive.New(cfg, store, cfg.Pipeline.DryRun)
+			result, err := ra.Run()
+			if err != nil {
+				return fmt.Errorf("重归档执行失败: %w", err)
+			}
+
+			printRearchiveResult(result, cfg.Pipeline.DryRun)
+			return nil
+		},
+	}
+	cmd.Flags().BoolVar(&rearchiveDryRun, "dry-run", false, "预览变更,不实际移动文件")
+	return cmd
+}
+
+func printRearchiveResult(r *rearchive.RearchiveResult, isDryRun bool) {
+	mode := ""
+	if isDryRun {
+		mode = " [DRY RUN]"
+	}
+	printBanner(fmt.Sprintf("重归档完成%s", mode))
+
+	fmt.Printf("📊 汇总:\n")
+	fmt.Printf("   ✅ 已迁移:  %d\n", r.Moved)
+	fmt.Printf("   ⏭️  跳过:    %d\n", r.Skipped)
+	fmt.Printf("   ❓ 缺失:    %d\n", r.Missing)
+
+	if len(r.Details) == 0 {
+		fmt.Println("\n   (无已归档文档)")
+		return
+	}
+
+	movedDetails := []rearchive.RearchiveDetail{}
+	for _, d := range r.Details {
+		if d.Status == "moved" {
+			movedDetails = append(movedDetails, d)
+		}
+	}
+
+	if len(movedDetails) > 0 {
+		fmt.Printf("\n📋 变更明细%s:\n", mode)
+		fmt.Printf("   %-30s  %-40s  →  %s\n", "文件名", "旧路径", "新路径")
+		fmt.Printf("   %s\n", strings.Repeat("─", 100))
+		for _, d := range movedDetails {
+			oldRel := d.OldPath
+			newRel := d.NewPath
+			fmt.Printf("   %-30s  %-40s  →  %s\n", d.FileName, oldRel, newRel)
+		}
+	}
+
+	missingDetails := []rearchive.RearchiveDetail{}
+	for _, d := range r.Details {
+		if d.Status == "missing" {
+			missingDetails = append(missingDetails, d)
+		}
+	}
+
+	if len(missingDetails) > 0 {
+		fmt.Printf("\n❓ 缺失文件 (源文件不存在):\n")
+		for _, d := range missingDetails {
+			fmt.Printf("   %s (原路径: %s)\n", d.FileName, d.OldPath)
+		}
+	}
+}
+
 func printBanner(title string) {
 	w := 60
 	fmt.Println()
@@ -620,6 +720,10 @@ func printSummary(s *models.SummaryReport, elapsed time.Duration) {
 
 	if s.NeedReview > 0 {
 		fmt.Printf("\n⚠️  有 %d 个文档需要人工复核，请检查归档目录中的文件。\n", s.NeedReview)
+	}
+
+	if s.ReportPath != "" {
+		fmt.Printf("\n📄 处理报告: %s\n", s.ReportPath)
 	}
 }
 

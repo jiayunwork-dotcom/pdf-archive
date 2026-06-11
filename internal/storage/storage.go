@@ -317,6 +317,57 @@ func (s *Storage) GetClassifier(docType string) (string, int, error) {
 	return modelData, count, err
 }
 
+type DoneDocument struct {
+	FileID       string
+	FilePath     string
+	MD5          string
+	DocType      string
+	Confidence   float64
+	Fields       map[string]models.ExtractedField
+	ArchivePath  string
+}
+
+func (s *Storage) ListDoneDocuments() ([]DoneDocument, error) {
+	rows, err := s.db.Query(`SELECT file_id, file_path, md5, doc_type, confidence, fields_json, archive_path
+		FROM documents WHERE status = 'done'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var results []DoneDocument
+	for rows.Next() {
+		var d DoneDocument
+		var fieldsJSON string
+		var docType, archivePath sql.NullString
+		err := rows.Scan(&d.FileID, &d.FilePath, &d.MD5, &docType, &d.Confidence, &fieldsJSON, &archivePath)
+		if err != nil {
+			return nil, err
+		}
+		if docType.Valid {
+			d.DocType = docType.String
+		}
+		if archivePath.Valid {
+			d.ArchivePath = archivePath.String
+		}
+		d.Fields = make(map[string]models.ExtractedField)
+		if fieldsJSON != "" {
+			_ = json.Unmarshal([]byte(fieldsJSON), &d.Fields)
+		}
+		results = append(results, d)
+	}
+	return results, rows.Err()
+}
+
+func (s *Storage) UpdateArchivePath(fileID, newArchivePath string) error {
+	_, err := s.db.Exec(`UPDATE documents SET archive_path = ? WHERE file_id = ?`, newArchivePath, fileID)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE pipeline_records SET archive_path = ? WHERE file_id = ?`, newArchivePath, fileID)
+	return err
+}
+
 func (s *Storage) GetAllClassifiers() (map[string]string, error) {
 	rows, err := s.db.Query(`SELECT doc_type, model_data FROM classifiers WHERE (doc_type, trained_at) IN (SELECT doc_type, MAX(trained_at) FROM classifiers GROUP BY doc_type)`)
 	if err != nil {
