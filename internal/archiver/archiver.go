@@ -102,6 +102,25 @@ func (a *Archiver) Archive(
 	return result
 }
 
+func (a *Archiver) ComputeTargetPath(srcPath string, fields map[string]models.ExtractedField, classResult *models.ClassificationResult) string {
+	variables := a.buildVariables(fields, classResult)
+	template := a.getArchiveTemplate(classResult)
+	a.fillSmartDefaults(variables, classResult)
+
+	targetRelPath, err := a.renderTemplate(template, variables)
+	if err != nil || targetRelPath == "" {
+		return filepath.Clean(filepath.Join(a.cfg.Archive.TargetDir, a.cfg.Archive.UnsortedDir, filepath.Base(srcPath)))
+	}
+
+	if !a.validateVariablesSmart(variables, template, classResult) {
+		return filepath.Clean(filepath.Join(a.cfg.Archive.TargetDir, a.cfg.Archive.UnsortedDir, filepath.Base(srcPath)))
+	}
+
+	targetPath := filepath.Join(a.cfg.Archive.TargetDir, targetRelPath)
+	targetPath = filepath.Clean(targetPath)
+	return targetPath
+}
+
 func (a *Archiver) getArchiveTemplate(classResult *models.ClassificationResult) string {
 	if classResult != nil {
 		typeCfg := a.cfg.GetDocTypeConfig(string(classResult.Type))

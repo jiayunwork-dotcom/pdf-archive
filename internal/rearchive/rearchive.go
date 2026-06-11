@@ -97,19 +97,7 @@ func (r *Rearchiver) processDocument(doc storage.DoneDocument) RearchiveDetail {
 		Confidence: doc.Confidence,
 	}
 
-	newArchiveResult := r.archiver.Archive(doc.ArchivePath, doc.Fields, classResult, true)
-
-	if !newArchiveResult.Success || newArchiveResult.TargetPath == "" {
-		detail.Status = "skipped"
-		detail.Error = newArchiveResult.Error
-		return detail
-	}
-
-	newPath := newArchiveResult.TargetPath
-
-	if r.cfg.Archive.ConflictPolicy == "rename" {
-		newPath = utils.ResolveConflict(newPath)
-	}
+	newPath := r.archiver.ComputeTargetPath(doc.ArchivePath, doc.Fields, classResult)
 
 	cleanOld := filepath.Clean(doc.ArchivePath)
 	cleanNew := filepath.Clean(newPath)
@@ -118,6 +106,10 @@ func (r *Rearchiver) processDocument(doc storage.DoneDocument) RearchiveDetail {
 		detail.Status = "skipped"
 		detail.NewPath = newPath
 		return detail
+	}
+
+	if r.cfg.Archive.ConflictPolicy == "rename" {
+		newPath = utils.ResolveConflict(newPath)
 	}
 
 	detail.NewPath = newPath

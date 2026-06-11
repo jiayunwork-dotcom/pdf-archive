@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>[DRY RUN] PDF归档处理报告</title>
+</head>
+<body style="margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Helvetica Neue',Arial,'Noto Sans SC',sans-serif;background:#f5f7fa;color:#333;line-height:1.6;">
+<div style="max-width:1200px;margin:0 auto;padding:20px;">
+
+<div style="background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);color:white;padding:30px;border-radius:12px;margin-bottom:24px;">
+<h1 style="margin:0 0 8px 0;font-size:24px;">[DRY RUN] PDF归档处理报告</h1>
+<p style="margin:0;opacity:0.9;font-size:14px;">生成时间: 2026-06-11 22:44:39 | 输入目录: . | 归档目录: .</p>
+</div>
+
+<div style="display:flex;flex-wrap:wrap;gap:16px;margin-bottom:24px;">
+<div style="flex:1;min-width:140px;background:#e3f2fd;border-left:4px solid #2196f3;padding:16px 20px;border-radius:8px;">
+<div style="font-size:28px;font-weight:bold;color:#1565c0;">3</div>
+<div style="font-size:13px;color:#555;">总文件数</div>
+</div>
+<div style="flex:1;min-width:140px;background:#e8f5e9;border-left:4px solid #4caf50;padding:16px 20px;border-radius:8px;">
+<div style="font-size:28px;font-weight:bold;color:#2e7d32;">3</div>
+<div style="font-size:13px;color:#555;">成功数</div>
+</div>
+<div style="flex:1;min-width:140px;background:#ffebee;border-left:4px solid #f44336;padding:16px 20px;border-radius:8px;">
+<div style="font-size:28px;font-weight:bold;color:#c62828;">0</div>
+<div style="font-size:13px;color:#555;">失败数</div>
+</div>
+<div style="flex:1;min-width:140px;background:#fff3e0;border-left:4px solid #ff9800;padding:16px 20px;border-radius:8px;">
+<div style="font-size:28px;font-weight:bold;color:#e65100;">1</div>
+<div style="font-size:13px;color:#555;">需复核数</div>
+</div>
+</div>
+
+<div style="background:white;border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:0 2px 8px rgba(0,0,0,0.06);">
+<h2 style="margin:0 0 20px 0;font-size:18px;border-bottom:2px solid #eee;padding-bottom:10px;">📋 按文档类型分组的详细列表</h2>
+
+<h3 style="margin:20px 0 12px 0;font-size:16px;color:#444;">resume (1 个文件)</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px;">
+<thead>
+<tr style="background:#f8f9fa;">
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;white-space:nowrap;">文件名</th>
+<th style="padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;white-space:nowrap;">分类置信度</th>
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">提取字段</th>
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;white-space:nowrap;">归档路径</th>
+</tr>
+</thead>
+<tbody>
+
+<tr style="">
+<td style="padding:8px 12px;border-bottom:1px solid #eee;">test_resume.pdf</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">0.63</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;"><span style="display:inline-block;margin:1px 4px 1px 0;"><b>candidate_name</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>姓名</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>工作年限</b>: Skills</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>技能</b>: Go, Python, Java, Kubernetes, Docker</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>最高学历</b>: Work Experience</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>电话</b>: </span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>邮箱</b>: zhangsan@example.com</span></td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666;">../archive/unsorted/test_resume.pdf</td>
+</tr>
+</tbody></table>
+<h3 style="margin:20px 0 12px 0;font-size:16px;color:#444;">invoice (1 个文件)</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px;">
+<thead>
+<tr style="background:#f8f9fa;">
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;white-space:nowrap;">文件名</th>
+<th style="padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;white-space:nowrap;">分类置信度</th>
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">提取字段</th>
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;white-space:nowrap;">归档路径</th>
+</tr>
+</thead>
+<tbody>
+
+<tr style="">
+<td style="padding:8px 12px;border-bottom:1px solid #eee;">test_invoice.pdf</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">0.95</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;"><span style="display:inline-block;margin:1px 4px 1px 0;"><b>invoice_no</b>: 12345678</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>vendor_name</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>发票代码</b>: 011002300111</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>发票号码</b>: 12345678</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>开票日期</b>: 2024-03</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>税号</b>: 91110000MA001ABCDE</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>税额</b>: 9.111e+07</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>购买方名称</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>金额</b>: 11300</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>销售方名称</b>: <span style="color:#999;font-style:italic;">未提取</span></span></td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666;">../archive/invoice/2024/03/invoice_12345678.pdf</td>
+</tr>
+</tbody></table>
+<h3 style="margin:20px 0 12px 0;font-size:16px;color:#444;">contract (1 个文件)</h3>
+<table style="width:100%;border-collapse:collapse;font-size:13px;">
+<thead>
+<tr style="background:#f8f9fa;">
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;white-space:nowrap;">文件名</th>
+<th style="padding:10px 12px;text-align:center;border-bottom:2px solid #dee2e6;white-space:nowrap;">分类置信度</th>
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;">提取字段</th>
+<th style="padding:10px 12px;text-align:left;border-bottom:2px solid #dee2e6;white-space:nowrap;">归档路径</th>
+</tr>
+</thead>
+<tbody>
+
+<tr style="">
+<td style="padding:8px 12px;border-bottom:1px solid #eee;">test_contract.pdf</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center;">0.95</td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;"><span style="display:inline-block;margin:1px 4px 1px 0;"><b>contract_no</b>: HT20240301001</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>contract_title</b>: Service Contract</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>month</b>: 03</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>vendor_name</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>year</b>: 2024</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>乙方</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>合同编号</b>: HT20240301001</span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>合同金额</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>甲方</b>: <span style="color:#999;font-style:italic;">未提取</span></span><span style="display:inline-block;margin:1px 4px 1px 0;"><b>签订日期</b>: 2024-03</span></td>
+<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666;">../archive/contract/2024/03/contract_HT20240301001.pdf</td>
+</tr>
+</tbody></table></div>
+<div style="background:white;border-radius:12px;padding:24px;margin-bottom:24px;box-shadow:0 2px 8px rgba(0,0,0,0.06);border-left:4px solid #ff9800;">
+<h2 style="margin:0 0 20px 0;font-size:18px;border-bottom:2px solid #eee;padding-bottom:10px;">⚠️ 低置信度文件清单 (置信度 &lt; 0.6)</h2>
+<p style="color:#999;text-align:center;padding:20px;">无低置信度文件</p></div>
+<div style="text-align:center;color:#999;font-size:12px;padding:20px 0;">
+<p>pdf-archive 处理报告 | 总耗时: 228ms | 生成于 2026-06-11 22:44:39</p>
+</div>
+</div>
+</body>
+</html>
