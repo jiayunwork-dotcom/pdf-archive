@@ -1,5 +1,6 @@
 type: resume
 display_name: 简历
+path_template: "{type}/{year}/{month}/{type}_{candidate_name}.pdf"
 keywords:
   - 简历
   - 教育经历

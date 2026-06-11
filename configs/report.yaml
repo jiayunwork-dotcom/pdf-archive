@@ -1,5 +1,6 @@
 type: report
 display_name: 检测报告
+path_template: "{type}/{year}/{month}/{type}_{report_no}.pdf"
 keywords:
   - 检测报告
   - 检测

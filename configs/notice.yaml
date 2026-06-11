@@ -1,5 +1,6 @@
 type: notice
 display_name: 通知公告
+path_template: "{type}/{year}/{month}/{type}_{notice_no}.pdf"
 keywords:
   - 通知
   - 公告

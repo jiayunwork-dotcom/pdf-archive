@@ -130,24 +130,56 @@ func (c *Classifier) ruleClassify(text string) *models.ClassificationResult {
 
 	for _, dt := range c.cfg.DocTypes {
 		count := 0
+		weightedCount := 0.0
 		matchedKeywords := make([]string, 0)
 		minMatches := dt.MinMatches
 		if minMatches <= 0 {
 			minMatches = 1
 		}
 
+		highValueKeywords := map[string]bool{}
+		for _, hv := range getHighValueKeywords(dt.Type) {
+			highValueKeywords[strings.ToLower(hv)] = true
+		}
+
 		for _, kw := range dt.Keywords {
 			lowerKw := strings.ToLower(kw)
 			n := strings.Count(text, lowerKw)
 			if n > 0 {
+				weight := 1.0
+				if highValueKeywords[lowerKw] {
+					weight = 2.5
+				} else if len(lowerKw) >= 4 {
+					weight = 1.5
+				}
 				count += n
+				weightedCount += float64(n) * weight
 				matchedKeywords = append(matchedKeywords, kw)
 			}
 		}
 
 		docType := models.DocType(dt.Type)
 		if count >= minMatches {
-			score := float64(count) / math.Max(float64(len(dt.Keywords)), 1)
+			maxPossible := 0.0
+			for _, kw := range dt.Keywords {
+				lowerKw := strings.ToLower(kw)
+				w := 1.0
+				if highValueKeywords[lowerKw] {
+					w = 2.5
+				} else if len(lowerKw) >= 4 {
+					w = 1.5
+				}
+				maxPossible += w
+			}
+			score := weightedCount / math.Max(maxPossible, 1)
+			if score > 1 {
+				score = 1.0
+			}
+			uniqueRatio := float64(len(matchedKeywords)) / float64(minMatches)
+			if uniqueRatio > 1 {
+				uniqueRatio = 1
+			}
+			score = 0.6*score + 0.4*uniqueRatio
 			if score > 1 {
 				score = 1.0
 			}
@@ -162,6 +194,9 @@ func (c *Classifier) ruleClassify(text string) *models.ClassificationResult {
 
 	if bestType != models.DocTypeUnknown {
 		confidence := result.Scores[bestType]
+		if confidence < 0.5 && bestCount >= 3 {
+			confidence = math.Max(confidence, 0.7)
+		}
 		if confidence > 0.9 {
 			confidence = 0.95
 		}
@@ -172,6 +207,23 @@ func (c *Classifier) ruleClassify(text string) *models.ClassificationResult {
 	}
 
 	return result
+}
+
+func getHighValueKeywords(docType string) []string {
+	switch docType {
+	case "resume":
+		return []string{"教育经历", "工作经验", "工作经历", "Education", "Experience", "Skills", "技能", "求职意向"}
+	case "invoice":
+		return []string{"发票", "价税合计", "纳税人识别号", "invoice", "VAT", "Tax Invoice"}
+	case "contract":
+		return []string{"合同", "甲方", "乙方", "合同编号", "违约责任", "Contract", "Party A", "Party B", "Agreement"}
+	case "report":
+		return []string{"检测报告", "检测项", "标准值", "实测值", "判定", "Test Report", "Inspection"}
+	case "notice":
+		return []string{"通知", "公告", "发文机关", "文号", "签发", "Notice", "Announcement", "Circular"}
+	default:
+		return nil
+	}
 }
 
 func (c *Classifier) mlClassify(text string) *models.ClassificationResult {

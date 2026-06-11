@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -430,83 +431,464 @@ func linesToBlocks(text string, pageNum int) []models.TextBlock {
 }
 
 var (
-	parenTextRe = regexp.MustCompile(`\(([^)]*)\)`)
-	tfRe        = regexp.MustCompile(`([\d.]+)\s+Tf`)
-	tdRe        = regexp.MustCompile(`([-\d.]+)\s+([-\d.]+)\s+T[dD]`)
-	tjRe        = regexp.MustCompile(`\(([^)]*)\)\s*Tj`)
-	tjArrayRe   = regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
+	parenTextRe  = regexp.MustCompile(`\(([^)]*)\)`)
+	hexTextRe    = regexp.MustCompile(`<([0-9A-Fa-f]+)>`)
+	tfRe         = regexp.MustCompile(`([\d.]+)\s+\/?([A-Za-z0-9]+)\s+Tf`)
+	tdRe         = regexp.MustCompile(`([-\d.]+)\s+([-\d.]+)\s+T[dD]`)
+	tjRe         = regexp.MustCompile(`\(([^)]*)\)\s*Tj`)
+	tjArrayRe    = regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
+	starRe       = regexp.MustCompile(`T\*\s*$`)
+	singleQuoteRe = regexp.MustCompile(`'$`)
+	doubleQuoteRe = regexp.MustCompile(`([-\d.]+)\s+([-\d.]+)\s+"$`)
 )
+
+type pdfTextState struct {
+	x, y          float64
+	startX        float64
+	fontSize      float64
+	leading       float64
+	textMatrix    [6]float64
+	inTextObject  bool
+}
+
+func newPDFTextState() pdfTextState {
+	return pdfTextState{
+		textMatrix: [6]float64{1, 0, 0, 1, 0, 0},
+		fontSize:   12,
+		leading:    14,
+	}
+}
+
+func (ts *pdfTextState) applyTd(dx, dy float64) {
+	ts.textMatrix[4] += dx
+	ts.textMatrix[5] += dy
+	ts.x = ts.textMatrix[4]
+	ts.y = ts.textMatrix[5]
+}
+
+func (ts *pdfTextState) newLine() {
+	ts.textMatrix[5] -= ts.leading
+	ts.textMatrix[4] = ts.startX
+	ts.x = ts.startX
+	ts.y = ts.textMatrix[5]
+}
 
 func extractReadableText(content string) string {
 	var texts []string
+	var curText strings.Builder
 
-	tjArrayRe := regexp.MustCompile(`\[([^\]]*)\]\s*TJ`)
-	content = tjArrayRe.ReplaceAllStringFunc(content, func(s string) string {
-		m := tjArrayRe.FindStringSubmatch(s)
-		if len(m) < 2 {
-			return s
-		}
-		inner := m[1]
-		parts := parenTextRe.FindAllStringSubmatch(inner, -1)
-		var combined string
-		for _, p := range parts {
-			if len(p) > 1 {
-				combined += p[1]
+	ts := newPDFTextState()
+	lastY := 842.0
+
+	content = strings.ReplaceAll(content, "\r\n", "\n")
+	content = strings.ReplaceAll(content, "\r", "\n")
+
+	tokens := tokenizePDFContent(content)
+	i := 0
+	for i < len(tokens) {
+		tok := tokens[i]
+
+		switch tok {
+		case "BT":
+			ts = newPDFTextState()
+			ts.inTextObject = true
+		case "ET":
+			ts.inTextObject = false
+			if curText.Len() > 0 {
+				texts = append(texts, strings.TrimSpace(curText.String()))
+				curText.Reset()
 			}
-		}
-		return "(" + combined + ") Tj"
-	})
-
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		if strings.Contains(line, "Tj") {
-			matches := tjRe.FindAllStringSubmatch(line, -1)
-			for _, m := range matches {
-				if len(m) > 1 {
-					t := decodePDFString(m[1])
-					if t != "" {
-						texts = append(texts, t)
+		case "Tf":
+			if i >= 2 {
+				if f, err := parseFloat(tokens[i-2]); err == nil {
+					ts.fontSize = f
+				}
+			}
+		case "Td":
+			if i >= 2 {
+				if dy, err := parseFloat(tokens[i-1]); err == nil {
+					if dx, err := parseFloat(tokens[i-2]); err == nil {
+						ts.applyTd(dx, dy)
+						if ts.y != lastY && curText.Len() > 0 {
+							texts = append(texts, strings.TrimSpace(curText.String()))
+							curText.Reset()
+						}
+						lastY = ts.y
 					}
 				}
 			}
-		}
-		if strings.Contains(line, "TJ") {
-			matches := parenTextRe.FindAllStringSubmatch(line, -1)
-			for _, m := range matches {
-				if len(m) > 1 {
-					t := decodePDFString(m[1])
-					if t != "" {
-						texts = append(texts, t)
+		case "TD":
+			if i >= 2 {
+				if dy, err := parseFloat(tokens[i-1]); err == nil {
+					ts.leading = -dy
+					if dx, err := parseFloat(tokens[i-2]); err == nil {
+						ts.applyTd(dx, dy)
+						if ts.y != lastY && curText.Len() > 0 {
+							texts = append(texts, strings.TrimSpace(curText.String()))
+							curText.Reset()
+						}
+						lastY = ts.y
 					}
 				}
 			}
+		case "Tm":
+			if i >= 6 {
+				if e, err := parseFloat(tokens[i-2]); err == nil {
+					if f, err := parseFloat(tokens[i-1]); err == nil {
+						ts.textMatrix = [6]float64{0, 0, 0, 0, e, f}
+						ts.x = e
+						ts.y = f
+						ts.startX = e
+					}
+				}
+			}
+		case "T*":
+			ts.newLine()
+			if curText.Len() > 0 {
+				texts = append(texts, strings.TrimSpace(curText.String()))
+				curText.Reset()
+			}
+		case "Tj":
+			if i >= 1 {
+				text := decodePDFTextToken(tokens[i-1])
+				if text != "" {
+					curText.WriteString(text)
+				}
+			}
+		case "'":
+			ts.newLine()
+			if curText.Len() > 0 {
+				texts = append(texts, strings.TrimSpace(curText.String()))
+				curText.Reset()
+			}
+			if i >= 1 {
+				text := decodePDFTextToken(tokens[i-1])
+				if text != "" {
+					curText.WriteString(text)
+				}
+			}
+		case "\"":
+			ts.newLine()
+			if curText.Len() > 0 {
+				texts = append(texts, strings.TrimSpace(curText.String()))
+				curText.Reset()
+			}
+			if i >= 3 {
+				text := decodePDFTextToken(tokens[i-3])
+				if text != "" {
+					curText.WriteString(text)
+				}
+			}
+		case "TJ":
+			if i >= 1 {
+				arrText := decodePDFTJArray(tokens[i-1])
+				if arrText != "" {
+					curText.WriteString(arrText)
+				}
+			}
+		}
+		i++
+	}
+
+	if curText.Len() > 0 {
+		texts = append(texts, strings.TrimSpace(curText.String()))
+	}
+
+	if len(texts) == 0 {
+		texts = extractTextFallback(content)
+	}
+
+	cleaned := make([]string, 0, len(texts))
+	for _, t := range texts {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			cleaned = append(cleaned, t)
 		}
 	}
 
-	if len(texts) > 0 {
-		return strings.Join(texts, "\n")
+	if len(cleaned) > 0 {
+		return strings.Join(cleaned, "\n")
 	}
-
-	return cleanContentStream(content)
+	return ""
 }
 
-func cleanContentStream(content string) string {
-	content = regexp.MustCompile(`\b[0-9.]+\s+[A-Za-z]+\b`).ReplaceAllString(content, " ")
-	content = strings.ReplaceAll(content, "Tj", "\n")
-	content = strings.ReplaceAll(content, "TJ", "\n")
-	content = strings.ReplaceAll(content, "ET", "\n\n")
-	content = regexp.MustCompile(`[^[:print:]\n]`).ReplaceAllString(content, " ")
-	content = strings.TrimSpace(content)
-	return content
+func tokenizePDFContent(content string) []string {
+	var tokens []string
+	var buf strings.Builder
+	inParen := false
+	inHex := false
+	parenDepth := 0
+	escaped := false
+
+	for i := 0; i < len(content); i++ {
+		c := content[i]
+
+		if inParen {
+			buf.WriteByte(c)
+			if escaped {
+				escaped = false
+				continue
+			}
+			if c == '\\' {
+				escaped = true
+				continue
+			}
+			if c == '(' {
+				parenDepth++
+			} else if c == ')' {
+				parenDepth--
+				if parenDepth == 0 {
+					inParen = false
+					tokens = append(tokens, buf.String())
+					buf.Reset()
+				}
+			}
+			continue
+		}
+
+		if inHex {
+			buf.WriteByte(c)
+			if c == '>' {
+				inHex = false
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+			continue
+		}
+
+		if c == '(' {
+			if buf.Len() > 0 {
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+			inParen = true
+			parenDepth = 1
+			buf.WriteByte(c)
+		} else if c == '<' {
+			if i+1 < len(content) && content[i+1] == '<' {
+				continue
+			}
+			if buf.Len() > 0 {
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+			inHex = true
+			buf.WriteByte(c)
+		} else if c == '>' {
+			if i+1 < len(content) && content[i+1] == '>' {
+				i++
+				continue
+			}
+		} else if c == '[' || c == ']' {
+			if buf.Len() > 0 {
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+			tokens = append(tokens, string(c))
+		} else if c == ' ' || c == '\t' || c == '\n' || c == '\r' {
+			if buf.Len() > 0 {
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+		} else if c == '/' {
+			if buf.Len() > 0 {
+				tokens = append(tokens, buf.String())
+				buf.Reset()
+			}
+			buf.WriteByte(c)
+		} else {
+			buf.WriteByte(c)
+		}
+	}
+
+	if buf.Len() > 0 {
+		tokens = append(tokens, buf.String())
+	}
+
+	return tokens
+}
+
+func parseFloat(s string) (float64, error) {
+	return strconv.ParseFloat(strings.TrimSpace(s), 64)
+}
+
+func decodePDFTextToken(token string) string {
+	if strings.HasPrefix(token, "(") && strings.HasSuffix(token, ")") {
+		content := token[1 : len(token)-1]
+		content = parseOctalEscapes(content)
+		return decodePDFString(content)
+	}
+	if strings.HasPrefix(token, "<") && strings.HasSuffix(token, ">") {
+		content := token[1 : len(token)-1]
+		return decodeHexString(content)
+	}
+	return ""
+}
+
+func parseOctalEscapes(s string) string {
+	var buf bytes.Buffer
+	i := 0
+	for i < len(s) {
+		if s[i] == '\\' && i+3 < len(s) && s[i+1] >= '0' && s[i+1] <= '7' && s[i+2] >= '0' && s[i+2] <= '7' && s[i+3] >= '0' && s[i+3] <= '7' {
+			octal := s[i+1 : i+4]
+			val, err := strconv.ParseUint(octal, 8, 8)
+			if err == nil {
+				buf.WriteByte(byte(val))
+			}
+			i += 4
+		} else if s[i] == '\\' && i+1 < len(s) {
+			switch s[i+1] {
+			case 'n':
+				buf.WriteByte('\n')
+			case 'r':
+				buf.WriteByte('\r')
+			case 't':
+				buf.WriteByte('\t')
+			case 'b':
+				buf.WriteByte('\b')
+			case 'f':
+				buf.WriteByte('\f')
+			case '\\':
+				buf.WriteByte('\\')
+			case '(':
+				buf.WriteByte('(')
+			case ')':
+				buf.WriteByte(')')
+			default:
+				buf.WriteByte(s[i+1])
+			}
+			i += 2
+		} else {
+			buf.WriteByte(s[i])
+			i++
+		}
+	}
+	return buf.String()
+}
+
+func decodeHexString(s string) string {
+	s = strings.TrimSpace(s)
+	if len(s)%2 != 0 {
+		s = s + "0"
+	}
+	var buf bytes.Buffer
+	for i := 0; i < len(s); i += 2 {
+		b, err := strconv.ParseUint(s[i:i+2], 16, 8)
+		if err == nil {
+			buf.WriteByte(byte(b))
+		}
+	}
+	result := buf.String()
+	if strings.HasPrefix(result, "\xFE\xFF") {
+		return decodeUTF16BE(result[2:])
+	}
+	return result
+}
+
+func decodeUTF16BE(s string) string {
+	if len(s)%2 != 0 {
+		s += "\x00"
+	}
+	runes := make([]rune, 0, len(s)/2)
+	for i := 0; i < len(s); i += 2 {
+		if i+1 >= len(s) {
+			break
+		}
+		r := rune(s[i])<<8 | rune(s[i+1])
+		runes = append(runes, r)
+	}
+	return string(runes)
+}
+
+func decodePDFTJArray(token string) string {
+	if !strings.HasPrefix(token, "[") || !strings.HasSuffix(token, "]") {
+		return ""
+	}
+	content := token[1 : len(token)-1]
+	var result strings.Builder
+	parts := strings.Split(content, " ")
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" {
+			continue
+		}
+		if strings.HasPrefix(p, "(") && strings.HasSuffix(p, ")") {
+			text := parseOctalEscapes(p[1 : len(p)-1])
+			result.WriteString(decodePDFString(text))
+		} else if strings.HasPrefix(p, "<") && strings.HasSuffix(p, ">") {
+			result.WriteString(decodeHexString(p[1 : len(p)-1]))
+		}
+	}
+	return result.String()
+}
+
+func extractTextFallback(content string) []string {
+	var texts []string
+
+	parenRe := regexp.MustCompile(`\(([^)]*)\)`)
+	matches := parenRe.FindAllStringSubmatch(content, -1)
+	for _, m := range matches {
+		if len(m) > 1 {
+			text := parseOctalEscapes(m[1])
+			text = decodePDFString(text)
+			text = strings.TrimSpace(text)
+			if text != "" && len(text) > 1 && len(text) < 300 {
+				if isLikelyText(text) {
+					texts = append(texts, text)
+				}
+			}
+		}
+	}
+
+	if len(texts) == 0 {
+		hexRe := regexp.MustCompile(`<([0-9A-Fa-f]{20,})>`)
+		matches := hexRe.FindAllStringSubmatch(content, -1)
+		for _, m := range matches {
+			if len(m) > 1 {
+				t := decodeHexString(m[1])
+				t = strings.TrimSpace(t)
+				if t != "" && isLikelyText(t) {
+					texts = append(texts, t)
+				}
+			}
+		}
+	}
+
+	return texts
+}
+
+func isLikelyText(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	printCount := 0
+	for _, r := range s {
+		if (r >= 32 && r <= 126) || (r >= 0x4E00 && r <= 0x9FFF) || r == '\n' || r == '\t' {
+			printCount++
+		}
+	}
+	return float64(printCount)/float64(len(s)) > 0.7
 }
 
 func decodePDFString(s string) string {
-	s = strings.ReplaceAll(s, `\\n`, "\n")
-	s = strings.ReplaceAll(s, `\r`, "\r")
-	s = strings.ReplaceAll(s, `\t`, "\t")
-	s = strings.ReplaceAll(s, `\\`, "\\")
-	s = strings.ReplaceAll(s, `\(`, "(")
-	s = strings.ReplaceAll(s, `\)`, ")")
+	if s == "" {
+		return ""
+	}
+
+	if len(s) >= 2 && s[0] == 0xFE && s[1] == 0xFF {
+		return decodeUTF16BE(s[2:])
+	}
+
+	nullCount := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] == 0 {
+			nullCount++
+		}
+	}
+	if len(s) > 0 && float64(nullCount)/float64(len(s)) > 0.3 {
+		return decodeUTF16BE(s)
+	}
+
 	return s
 }
 
@@ -515,57 +897,281 @@ func extractBlocksFromContent(content string, pageNr int) []models.TextBlock {
 
 	pageHeight := 842.0
 
-	var curX, curY float64 = 50, pageHeight
-	var fontSize float64 = 12
+	ts := newPDFTextState()
+	lastY := pageHeight
 
-	lines := strings.Split(content, "\n")
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if m := tfRe.FindStringSubmatch(line); len(m) > 1 {
-			fmt.Sscanf(m[1], "%f", &fontSize)
-			if fontSize < 1 {
-				fontSize = 12
-			}
-		}
-		if m := tdRe.FindStringSubmatch(line); len(m) > 2 {
-			var dx, dy float64
-			fmt.Sscanf(m[1], "%f", &dx)
-			fmt.Sscanf(m[2], "%f", &dy)
-			curX = dx
-			curY -= dy
-		}
-		if strings.Contains(line, "Tj") || strings.Contains(line, "TJ") {
-			matches := parenTextRe.FindAllStringSubmatch(line, -1)
-			for _, m := range matches {
-				if len(m) > 1 {
-					text := decodePDFString(m[1])
-					text = strings.TrimSpace(text)
-					if text == "" {
-						continue
-					}
-					w := float64(len(text)) * fontSize * 0.5
+	tokens := tokenizePDFContent(content)
+	i := 0
+	var currentText strings.Builder
+	var lastBlockX, lastBlockY float64
+
+	for i < len(tokens) {
+		tok := tokens[i]
+
+		switch tok {
+		case "BT":
+			ts = newPDFTextState()
+			ts.inTextObject = true
+			currentText.Reset()
+		case "ET":
+			ts.inTextObject = false
+			if currentText.Len() > 0 {
+				text := strings.TrimSpace(currentText.String())
+				if text != "" {
+					w := float64(len(text)) * ts.fontSize * 0.5
 					if w < 5 {
 						w = 5
 					}
-					h := fontSize * 1.2
+					h := ts.fontSize * 1.2
 					if h < 5 {
 						h = 5
 					}
 					blocks = append(blocks, models.TextBlock{
 						Text:     text,
-						X:        curX,
-						Y:        pageHeight - curY,
+						X:        ts.x,
+						Y:        pageHeight - ts.y,
 						Width:    w,
 						Height:   h,
 						PageNum:  pageNr,
-						FontSize: fontSize,
+						FontSize: ts.fontSize,
 					})
-					curX += w
+					lastBlockX = ts.x
+					lastBlockY = ts.y
+				}
+				currentText.Reset()
+			}
+		case "Tf":
+			if i >= 2 {
+				if f, err := parseFloat(tokens[i-2]); err == nil {
+					ts.fontSize = f
 				}
 			}
+		case "Td":
+			if i >= 2 {
+				if dy, err := parseFloat(tokens[i-1]); err == nil {
+					if dx, err := parseFloat(tokens[i-2]); err == nil {
+						ts.applyTd(dx, dy)
+						if ts.y != lastY && currentText.Len() > 0 {
+							text := strings.TrimSpace(currentText.String())
+							if text != "" {
+								w := float64(len(text)) * ts.fontSize * 0.5
+								if w < 5 {
+									w = 5
+								}
+								h := ts.fontSize * 1.2
+								if h < 5 {
+									h = 5
+								}
+								blocks = append(blocks, models.TextBlock{
+									Text:     text,
+									X:        lastBlockX,
+									Y:        pageHeight - lastBlockY,
+									Width:    w,
+									Height:   h,
+									PageNum:  pageNr,
+									FontSize: ts.fontSize,
+								})
+								currentText.Reset()
+							}
+						}
+						lastY = ts.y
+					}
+				}
+			}
+		case "TD":
+			if i >= 2 {
+				if dy, err := parseFloat(tokens[i-1]); err == nil {
+					ts.leading = -dy
+					if dx, err := parseFloat(tokens[i-2]); err == nil {
+						ts.applyTd(dx, dy)
+						if ts.y != lastY && currentText.Len() > 0 {
+							text := strings.TrimSpace(currentText.String())
+							if text != "" {
+								w := float64(len(text)) * ts.fontSize * 0.5
+								if w < 5 {
+									w = 5
+								}
+								h := ts.fontSize * 1.2
+								if h < 5 {
+									h = 5
+								}
+								blocks = append(blocks, models.TextBlock{
+									Text:     text,
+									X:        lastBlockX,
+									Y:        pageHeight - lastBlockY,
+									Width:    w,
+									Height:   h,
+									PageNum:  pageNr,
+									FontSize: ts.fontSize,
+								})
+								currentText.Reset()
+							}
+						}
+						lastY = ts.y
+					}
+				}
+			}
+		case "Tm":
+			if i >= 6 {
+				if e, err := parseFloat(tokens[i-2]); err == nil {
+					if f, err := parseFloat(tokens[i-1]); err == nil {
+						ts.textMatrix = [6]float64{0, 0, 0, 0, e, f}
+						ts.x = e
+						ts.y = f
+						ts.startX = e
+					}
+				}
+			}
+		case "T*":
+			ts.newLine()
+			if currentText.Len() > 0 {
+				text := strings.TrimSpace(currentText.String())
+				if text != "" {
+					w := float64(len(text)) * ts.fontSize * 0.5
+					if w < 5 {
+						w = 5
+					}
+					h := ts.fontSize * 1.2
+					if h < 5 {
+						h = 5
+					}
+					blocks = append(blocks, models.TextBlock{
+						Text:     text,
+						X:        lastBlockX,
+						Y:        pageHeight - lastBlockY,
+						Width:    w,
+						Height:   h,
+						PageNum:  pageNr,
+						FontSize: ts.fontSize,
+					})
+					currentText.Reset()
+				}
+			}
+		case "Tj":
+			if i >= 1 {
+				text := decodePDFTextToken(tokens[i-1])
+				if text != "" {
+					currentText.WriteString(text)
+					lastBlockX = ts.x
+					lastBlockY = ts.y
+				}
+			}
+		case "'":
+			ts.newLine()
+			if currentText.Len() > 0 {
+				text := strings.TrimSpace(currentText.String())
+				if text != "" {
+					w := float64(len(text)) * ts.fontSize * 0.5
+					if w < 5 {
+						w = 5
+					}
+					h := ts.fontSize * 1.2
+					if h < 5 {
+						h = 5
+					}
+					blocks = append(blocks, models.TextBlock{
+						Text:     text,
+						X:        lastBlockX,
+						Y:        pageHeight - lastBlockY,
+						Width:    w,
+						Height:   h,
+						PageNum:  pageNr,
+						FontSize: ts.fontSize,
+					})
+					currentText.Reset()
+				}
+			}
+			if i >= 1 {
+				text := decodePDFTextToken(tokens[i-1])
+				if text != "" {
+					currentText.WriteString(text)
+					lastBlockX = ts.x
+					lastBlockY = ts.y
+				}
+			}
+		case "\"":
+			ts.newLine()
+			if currentText.Len() > 0 {
+				text := strings.TrimSpace(currentText.String())
+				if text != "" {
+					w := float64(len(text)) * ts.fontSize * 0.5
+					if w < 5 {
+						w = 5
+					}
+					h := ts.fontSize * 1.2
+					if h < 5 {
+						h = 5
+					}
+					blocks = append(blocks, models.TextBlock{
+						Text:     text,
+						X:        lastBlockX,
+						Y:        pageHeight - lastBlockY,
+						Width:    w,
+						Height:   h,
+						PageNum:  pageNr,
+						FontSize: ts.fontSize,
+					})
+					currentText.Reset()
+				}
+			}
+			if i >= 3 {
+				text := decodePDFTextToken(tokens[i-3])
+				if text != "" {
+					currentText.WriteString(text)
+					lastBlockX = ts.x
+					lastBlockY = ts.y
+				}
+			}
+		case "TJ":
+			if i >= 1 {
+				arrText := decodePDFTJArray(tokens[i-1])
+				if arrText != "" {
+					currentText.WriteString(arrText)
+					lastBlockX = ts.x
+					lastBlockY = ts.y
+				}
+			}
+		}
+		i++
+	}
+
+	if currentText.Len() > 0 {
+		text := strings.TrimSpace(currentText.String())
+		if text != "" {
+			w := float64(len(text)) * ts.fontSize * 0.5
+			if w < 5 {
+				w = 5
+			}
+			h := ts.fontSize * 1.2
+			if h < 5 {
+				h = 5
+			}
+			blocks = append(blocks, models.TextBlock{
+				Text:     text,
+				X:        ts.x,
+				Y:        pageHeight - ts.y,
+				Width:    w,
+				Height:   h,
+				PageNum:  pageNr,
+				FontSize: ts.fontSize,
+			})
+		}
+	}
+
+	if len(blocks) == 0 {
+		fbTexts := extractTextFallback(content)
+		y := 50.0
+		for _, t := range fbTexts {
+			blocks = append(blocks, models.TextBlock{
+				Text:     t,
+				X:        50,
+				Y:        y,
+				Width:    float64(len(t)) * 7,
+				Height:   14,
+				PageNum:  pageNr,
+				FontSize: 12,
+			})
+			y += 14
 		}
 	}
 

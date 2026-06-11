@@ -33,11 +33,12 @@ type PostProcessRule struct {
 }
 
 type DocTypeConfig struct {
-	Type        string        `yaml:"type"`
-	DisplayName string        `yaml:"display_name"`
-	Keywords    []string      `yaml:"keywords"`
-	MinMatches  int           `yaml:"min_matches,omitempty"`
-	ExtractRules []ExtractRule `yaml:"extract_rules"`
+	Type         string         `yaml:"type"`
+	DisplayName  string         `yaml:"display_name"`
+	Keywords     []string       `yaml:"keywords"`
+	MinMatches   int            `yaml:"min_matches,omitempty"`
+	PathTemplate string         `yaml:"path_template,omitempty"`
+	ExtractRules []ExtractRule  `yaml:"extract_rules"`
 }
 
 type PipelineStages struct {
@@ -340,6 +341,9 @@ func mergeConfigs(target *Config, base *Config) {
 			}
 			if dt.MinMatches > 0 {
 				target.DocTypes[idx].MinMatches = dt.MinMatches
+			}
+			if dt.PathTemplate != "" {
+				target.DocTypes[idx].PathTemplate = dt.PathTemplate
 			}
 		} else {
 			target.DocTypes = append(target.DocTypes, dt)

@@ -1,5 +1,6 @@
 type: contract
 display_name: 合同
+path_template: "{type}/{year}/{month}/{type}_{contract_no}.pdf"
 keywords:
   - 合同
   - 甲方

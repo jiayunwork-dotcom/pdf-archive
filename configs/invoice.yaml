@@ -1,5 +1,6 @@
 type: invoice
 display_name: 发票
+path_template: "{type}/{year}/{month}/{type}_{invoice_no}.pdf"
 keywords:
   - 发票
   - 税号

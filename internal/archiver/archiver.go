@@ -40,13 +40,16 @@ func (a *Archiver) Archive(
 
 	variables := a.buildVariables(fields, classResult)
 
-	targetRelPath, err := a.renderTemplate(a.cfg.Archive.PathTemplate, variables)
+	template := a.getArchiveTemplate(classResult)
+	a.fillSmartDefaults(variables, classResult)
+
+	targetRelPath, err := a.renderTemplate(template, variables)
 	if err != nil || targetRelPath == "" {
 		result.Unsorted = true
 		targetRelPath = filepath.Join(a.cfg.Archive.UnsortedDir, filepath.Base(srcPath))
 	}
 
-	if !a.validateVariables(variables, a.cfg.Archive.PathTemplate) {
+	if !a.validateVariablesSmart(variables, template, classResult) {
 		result.Unsorted = true
 		targetRelPath = filepath.Join(a.cfg.Archive.UnsortedDir, filepath.Base(srcPath))
 	}
@@ -97,6 +100,81 @@ func (a *Archiver) Archive(
 
 	result.Success = true
 	return result
+}
+
+func (a *Archiver) getArchiveTemplate(classResult *models.ClassificationResult) string {
+	if classResult != nil {
+		typeCfg := a.cfg.GetDocTypeConfig(string(classResult.Type))
+		if typeCfg != nil && typeCfg.PathTemplate != "" {
+			return typeCfg.PathTemplate
+		}
+	}
+	return a.cfg.Archive.PathTemplate
+}
+
+func (a *Archiver) fillSmartDefaults(vars map[string]string, classResult *models.ClassificationResult) {
+	if _, ok := vars["year"]; !ok {
+		vars["year"] = "unknown"
+	}
+	if _, ok := vars["month"]; !ok {
+		vars["month"] = "unknown"
+	}
+	docNoFields := map[string][]string{
+		"invoice":  {"invoice_no", "发票号码", "invoice_number", "invoice_num"},
+		"contract": {"contract_no", "合同编号", "contract_id", "contract_number"},
+		"resume":   {"candidate_name", "姓名", "name"},
+		"report":   {"report_no", "报告编号", "report_id", "report_number"},
+		"notice":   {"notice_no", "文号", "notice_id"},
+	}
+	noField := "doc_no"
+	if classResult != nil {
+		docType := string(classResult.Type)
+		if fields, ok := docNoFields[docType]; ok {
+			for _, f := range fields {
+				if v, ok := vars[f]; ok && v != "" {
+					vars[noField] = v
+					break
+				}
+			}
+			if _, ok := vars["invoice_no"]; !ok {
+				if v, ok := vars[noField]; ok && v != "" {
+					vars["invoice_no"] = v
+				}
+			}
+		}
+	}
+}
+
+func (a *Archiver) validateVariablesSmart(vars map[string]string, template string, classResult *models.ClassificationResult) bool {
+	matches := varRe.FindAllStringSubmatch(template, -1)
+	requiredFields := make(map[string]bool)
+	optionalFields := map[string]bool{
+		"year":  true,
+		"month": true,
+	}
+	for _, m := range matches {
+		if len(m) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(m[1])
+		requiredFields[name] = true
+	}
+	for name := range requiredFields {
+		v, ok := vars[name]
+		if !ok || v == "" {
+			if optionalFields[name] {
+				continue
+			}
+			if classResult != nil {
+				docType := string(classResult.Type)
+				if (docType == "contract" || docType == "resume" || docType == "report" || docType == "notice") && name == "invoice_no" {
+					continue
+				}
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Archiver) buildVariables(fields map[string]models.ExtractedField, classResult *models.ClassificationResult) map[string]string {
@@ -211,20 +289,6 @@ func (a *Archiver) renderTemplate(template string, vars map[string]string) (stri
 	result = filepath.Clean(result)
 	result = strings.ReplaceAll(result, "//", "/")
 	return result, nil
-}
-
-func (a *Archiver) validateVariables(vars map[string]string, template string) bool {
-	matches := varRe.FindAllStringSubmatch(template, -1)
-	for _, m := range matches {
-		if len(m) < 2 {
-			continue
-		}
-		name := strings.TrimSpace(m[1])
-		if v, ok := vars[name]; !ok || v == "" {
-			return false
-		}
-	}
-	return true
 }
 
 func copyFile(src, dst string) error {
