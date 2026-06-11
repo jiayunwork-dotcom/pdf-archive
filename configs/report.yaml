@@ -1,0 +1,155 @@
+type: report
+display_name: 检测报告
+keywords:
+  - 检测报告
+  - 检测
+  - 测试报告
+  - 检验报告
+  - 检测项
+  - 标准值
+  - 实测值
+  - 判定
+  - report
+  - Report
+  - REPORT
+  - test report
+  - inspection
+  - Inspection
+  - Test Result
+  - standard value
+min_matches: 2
+extract_rules:
+  - field_name: 报告编号
+    description: 检测报告编号
+    strategy: regex
+    pattern: "报告编号[:：\\s]*([A-Za-z0-9_-]{6,30})"
+    group_index: 1
+    required: true
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: 报告编号
+        strategy: regex
+        pattern: "(?i)report[\\s_-]?no\\.?[:：\\s]*([A-Za-z0-9_-]{6,30})"
+        group_index: 1
+
+  - field_name: report_no
+    description: 归档用报告编号
+    strategy: regex
+    pattern: "报告编号[:：\\s]*([A-Za-z0-9_-]{6,30})"
+    group_index: 1
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: report_no
+        strategy: regex
+        pattern: "(?i)report[\\s_-]?no\\.?[:：\\s]*([A-Za-z0-9_-]{6,30})"
+        group_index: 1
+
+  - field_name: 检测日期
+    description: 检测日期
+    strategy: regex
+    pattern: "检测日期[:：\\s]*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{0,2}日?)"
+    group_index: 1
+    post_process:
+      - type: date_format
+    alternatives:
+      - field_name: 检测日期
+        strategy: regex
+        pattern: "(?i)test[\\s_-]?date[:：\\s]*(\\d{4}[-/.]\\d{1,2}[-/.]\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: date_format
+
+  - field_name: 委托单位
+    description: 委托单位名称
+    strategy: keyword
+    keyword: 委托单位
+    direction: right
+    distance: 300
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 委托单位
+        strategy: keyword
+        keyword: Client
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: vendor_name
+    description: 归档用委托单位
+    strategy: keyword
+    keyword: 委托单位
+    direction: right
+    distance: 300
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+    alternatives:
+      - field_name: vendor_name
+        strategy: keyword
+        keyword: Client
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+          - type: sanitize_filename
+
+  - field_name: 检测机构
+    description: 检测机构名称
+    strategy: keyword
+    keyword: 检测机构
+    direction: right
+    distance: 300
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 检测机构
+        strategy: keyword
+        keyword: Laboratory
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: 检测项目数
+    description: 检测项目数量
+    strategy: keyword
+    keyword: 检测项
+    direction: down
+    distance: 500
+    post_process:
+      - type: clean
+
+  - field_name: 判定结论
+    description: 综合判定结论
+    strategy: keyword
+    keyword: 判定
+    direction: down
+    distance: 300
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 判定结论
+        strategy: keyword
+        keyword: Conclusion
+        direction: any
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: year
+    description: 归档用年份
+    strategy: regex
+    pattern: "(\\d{4})[-/年]\\d{1,2}"
+    group_index: 1
+
+  - field_name: month
+    description: 归档用月份
+    strategy: regex
+    pattern: "\\d{4}[-/年](\\d{1,2})"
+    group_index: 1
+    post_process:
+      - type: pad_zero

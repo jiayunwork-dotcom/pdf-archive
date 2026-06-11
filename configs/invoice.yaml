@@ -1,0 +1,243 @@
+type: invoice
+display_name: 发票
+keywords:
+  - 发票
+  - 税号
+  - 价税合计
+  - 开票日期
+  - 纳税人识别号
+  - 发票号码
+  - 发票代码
+  - 销售方
+  - 购买方
+  - 税额
+  - invoice
+  - Invoice
+  - INVOICE
+  - VAT
+  - Tax
+  - tax invoice
+min_matches: 2
+extract_rules:
+  - field_name: 发票号码
+    description: 发票号码
+    strategy: regex
+    pattern: "发票号码[:：\\s]*([0-9]{8,20})"
+    group_index: 1
+    required: true
+    post_process:
+      - type: trim
+      - type: remove_whitespace
+    alternatives:
+      - field_name: 发票号码
+        strategy: regex
+        pattern: "No\\.?[:：\\s]*([0-9]{8,20})"
+        group_index: 1
+      - field_name: invoice_no
+        strategy: regex
+        pattern: "(?i)invoice[\\s_-]?no\\.?[:：\\s]*([0-9A-Z-]{6,20})"
+        group_index: 1
+      - field_name: 发票号码
+        strategy: regex
+        pattern: "(?i)number[:：\\s]*([0-9]{6,20})"
+        group_index: 1
+
+  - field_name: invoice_no
+    description: 归档用发票号
+    strategy: regex
+    pattern: "发票号码[:：\\s]*([0-9]{8,20})"
+    group_index: 1
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: invoice_no
+        strategy: regex
+        pattern: "(?i)invoice[\\s_-]?no\\.?[:：\\s]*([0-9A-Z-]{6,20})"
+        group_index: 1
+
+  - field_name: 发票代码
+    description: 发票代码
+    strategy: regex
+    pattern: "发票代码[:：\\s]*([0-9]{10,12})"
+    group_index: 1
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: 发票代码
+        strategy: regex
+        pattern: "(?i)code[:：\\s]*([0-9]{10,12})"
+        group_index: 1
+
+  - field_name: 开票日期
+    description: 开票日期
+    strategy: regex
+    pattern: "开票日期[:：\\s]*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{0,2}日?)"
+    group_index: 1
+    required: true
+    post_process:
+      - type: date_format
+    alternatives:
+      - field_name: 开票日期
+        strategy: regex
+        pattern: "(?i)date[:：\\s]*(\\d{4}[-/.]\\d{1,2}[-/.]\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: date_format
+      - field_name: 开票日期
+        strategy: regex
+        pattern: "(?i)issued?[:：\\s]*(\\d{4}[-/.]\\d{1,2}[-/.]\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: date_format
+
+  - field_name: 税号
+    description: 纳税人识别号/税号
+    strategy: regex
+    pattern: "纳税人识别号[:：\\s]*([A-Z0-9]{15,20})"
+    group_index: 1
+    alternatives:
+      - field_name: 税号
+        strategy: regex
+        pattern: "统一社会信用代码[:：\\s]*([A-Z0-9]{15,20})"
+        group_index: 1
+      - field_name: 税号
+        strategy: regex
+        pattern: "(?i)tax[\\s_-]?id[:：\\s]*([A-Z0-9]{10,20})"
+        group_index: 1
+
+  - field_name: 金额
+    description: 价税合计金额
+    strategy: keyword
+    keyword: 价税合计
+    direction: any
+    distance: 300
+    required: true
+    post_process:
+      - type: amount_number
+    alternatives:
+      - field_name: 金额
+        strategy: keyword
+        keyword: 小写
+        direction: right
+        distance: 200
+        post_process:
+          - type: amount_number
+      - field_name: 金额
+        strategy: keyword
+        keyword: Total
+        direction: right
+        distance: 200
+        post_process:
+          - type: amount_number
+      - field_name: 金额
+        strategy: keyword
+        keyword: TOTAL
+        direction: right
+        distance: 200
+        post_process:
+          - type: amount_number
+      - field_name: 金额
+        strategy: regex
+        pattern: "(?i)total[^\\d]{0,10}([\\d,]+\\.?\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: amount_number
+
+  - field_name: 税额
+    description: 税额
+    strategy: keyword
+    keyword: 税额
+    direction: any
+    distance: 200
+    post_process:
+      - type: amount_number
+    alternatives:
+      - field_name: 税额
+        strategy: keyword
+        keyword: Tax
+        direction: any
+        distance: 200
+        post_process:
+          - type: amount_number
+      - field_name: 税额
+        strategy: regex
+        pattern: "(?i)tax[^\\d]{0,10}([\\d,]+\\.?\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: amount_number
+
+  - field_name: 销售方名称
+    description: 销售方/开票方名称
+    strategy: keyword
+    keyword: 销售方
+    direction: down
+    distance: 500
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+    alternatives:
+      - field_name: 销售方名称
+        strategy: keyword
+        keyword: 开票方
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+      - field_name: 销售方名称
+        strategy: keyword
+        keyword: Seller
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+      - field_name: 销售方名称
+        strategy: keyword
+        keyword: From
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: 购买方名称
+    description: 购买方名称
+    strategy: keyword
+    keyword: 购买方
+    direction: down
+    distance: 500
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+    alternatives:
+      - field_name: 购买方名称
+        strategy: keyword
+        keyword: Buyer
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+      - field_name: 购买方名称
+        strategy: keyword
+        keyword: To
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: vendor_name
+    description: 归档用供应商名称
+    strategy: keyword
+    keyword: 销售方
+    direction: down
+    distance: 500
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+    alternatives:
+      - field_name: vendor_name
+        strategy: keyword
+        keyword: Seller
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+          - type: sanitize_filename

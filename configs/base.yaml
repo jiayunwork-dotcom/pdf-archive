@@ -1,0 +1,78 @@
+app_name: pdf-archive
+log_level: info
+log_dir: ./logs
+
+base_configs: []
+
+pipeline:
+  input_dir: ./input
+  workers: 0
+  recursive: true
+  dry_run: false
+  verbose: false
+  timeout_per_file_sec: 120
+  max_files: 10000
+  large_page_count: 200
+  batch_page_size: 50
+  resume_from_db: true
+  low_conf_threshold: 0.6
+
+stages:
+  scan: true
+  parse: true
+  classify: true
+  extract: true
+  validate: true
+  archive: true
+  report: true
+
+ocr:
+  enabled: true
+  command: tesseract
+  languages: chi_sim+eng
+  timeout_sec: 300
+  dpi: 300
+  min_text_len: 50
+  confidence_threshold: 0.8
+
+classifier:
+  enable_ml: true
+  rule_first: true
+  threshold: 0.5
+  ml_model_path: ./classifier-model.json
+  min_train_samples: 10
+  stop_words:
+    - 的
+    - 了
+    - 和
+    - 是
+    - 在
+    - 我
+    - 有
+    - 也
+    - the
+    - a
+    - an
+    - is
+    - of
+    - and
+    - to
+
+archive:
+  target_dir: ./archive
+  path_template: "{type}/{year}/{month}/{type}_{invoice_no}.pdf"
+  unsorted_dir: unsorted
+  mode: copy
+  conflict_policy: rename
+
+storage:
+  db_path: ./pdf-archive.db
+  index_fields:
+    - invoice_no
+    - contract_no
+    - date
+    - vendor_name
+    - amount
+  enable_full_text: true
+
+doc_types: []

@@ -1,0 +1,105 @@
+app_name: pdf-archive
+log_level: info
+log_dir: ./logs
+pipeline:
+    input_dir: ""
+    workers: 8
+    recursive: true
+    dry_run: false
+    verbose: false
+    timeout_per_file_sec: 120
+    max_files: 10000
+    large_page_count: 200
+    batch_page_size: 50
+    resume_from_db: true
+    low_conf_threshold: 0.6
+stages:
+    scan: true
+    parse: true
+    classify: true
+    extract: true
+    validate: true
+    archive: true
+    report: true
+ocr:
+    enabled: true
+    command: tesseract
+    languages: chi_sim+eng
+    timeout_sec: 300
+    dpi: 300
+    min_text_len: 50
+    confidence_threshold: 0.7
+classifier:
+    enable_ml: true
+    rule_first: true
+    threshold: 0.5
+    ml_model_path: ""
+    min_train_samples: 10
+archive:
+    target_dir: ./archive
+    path_template: '{type}/{year}/{month}/{type}_{invoice_no}.pdf'
+    unsorted_dir: ./archive/unsorted
+    mode: copy
+    conflict_policy: rename
+storage:
+    db_path: ./pdf-archive.db
+    enable_full_text: true
+doc_types:
+    - type: invoice
+      display_name: 发票
+      keywords:
+        - 发票
+        - 税号
+        - 价税合计
+        - 开票日期
+        - 纳税人识别号
+        - 发票号码
+        - 发票代码
+      min_matches: 2
+      extract_rules: []
+    - type: contract
+      display_name: 合同
+      keywords:
+        - 合同
+        - 甲方
+        - 乙方
+        - 签订日期
+        - 合同编号
+        - 违约责任
+        - 权利义务
+      min_matches: 2
+      extract_rules: []
+    - type: resume
+      display_name: 简历
+      keywords:
+        - 教育经历
+        - 工作经验
+        - 技能
+        - 求职意向
+        - 个人简介
+        - 项目经验
+      min_matches: 2
+      extract_rules: []
+    - type: report
+      display_name: 检测报告
+      keywords:
+        - 检测报告
+        - 检测项
+        - 标准值
+        - 实测值
+        - 判定
+        - 检验结论
+        - 测试报告
+      min_matches: 2
+      extract_rules: []
+    - type: notice
+      display_name: 通知公告
+      keywords:
+        - 通知
+        - 公告
+        - 发文机关
+        - 文号
+        - 签发
+        - 印发
+      min_matches: 2
+      extract_rules: []

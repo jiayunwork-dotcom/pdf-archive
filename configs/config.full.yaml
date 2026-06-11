@@ -1,0 +1,16 @@
+base_configs:
+  - ./base.yaml
+  - ./invoice.yaml
+  - ./contract.yaml
+  - ./resume.yaml
+  - ./report.yaml
+  - ./notice.yaml
+
+pipeline:
+  input_dir: ./input
+  verbose: true
+
+archive:
+  target_dir: ./archive
+  path_template: "{type}/{year}/{month}/{type}_{invoice_no}.pdf"
+  mode: copy

@@ -1,0 +1,137 @@
+type: resume
+display_name: 简历
+keywords:
+  - 简历
+  - 教育经历
+  - 工作经验
+  - 工作经历
+  - 个人信息
+  - 技能
+  - 求职意向
+  - 专业
+  - resume
+  - Resume
+  - RESUME
+  - CV
+  - curriculum vitae
+  - Education
+  - Experience
+  - Skills
+min_matches: 2
+extract_rules:
+  - field_name: 姓名
+    description: 求职者姓名
+    strategy: keyword
+    keyword: 姓名
+    direction: right
+    distance: 100
+    required: true
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 姓名
+        strategy: keyword
+        keyword: Name
+        direction: right
+        distance: 100
+        post_process:
+          - type: clean
+
+  - field_name: candidate_name
+    description: 归档用姓名
+    strategy: keyword
+    keyword: 姓名
+    direction: right
+    distance: 100
+    post_process:
+      - type: sanitize_filename
+    alternatives:
+      - field_name: candidate_name
+        strategy: keyword
+        keyword: Name
+        direction: right
+        distance: 100
+        post_process:
+          - type: sanitize_filename
+
+  - field_name: 电话
+    description: 联系电话
+    strategy: regex
+    pattern: "(?i)tel|phone|mobile|电话|手机|联系电话[:：\\s]*([\\d-+]{7,20})"
+    group_index: 1
+    post_process:
+      - type: remove_whitespace
+    alternatives:
+      - field_name: 电话
+        strategy: regex
+        pattern: "(1[3-9]\\d{9})"
+        group_index: 1
+
+  - field_name: 邮箱
+    description: 电子邮箱
+    strategy: regex
+    pattern: "(?i)(email|e-mail|邮箱)[:：\\s]*([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})"
+    group_index: 2
+    alternatives:
+      - field_name: 邮箱
+        strategy: regex
+        pattern: "([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,})"
+        group_index: 1
+
+  - field_name: 最高学历
+    description: 教育背景最高学历
+    strategy: keyword
+    keyword: 教育经历
+    direction: down
+    distance: 1000
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 最高学历
+        strategy: keyword
+        keyword: Education
+        direction: down
+        distance: 1000
+        post_process:
+          - type: clean
+
+  - field_name: 工作年限
+    description: 工作经验年限
+    strategy: keyword
+    keyword: 工作经验
+    direction: down
+    distance: 1000
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 工作年限
+        strategy: keyword
+        keyword: 工作经历
+        direction: down
+        distance: 1000
+        post_process:
+          - type: clean
+      - field_name: 工作年限
+        strategy: keyword
+        keyword: Experience
+        direction: down
+        distance: 1000
+        post_process:
+          - type: clean
+
+  - field_name: 技能
+    description: 专业技能
+    strategy: keyword
+    keyword: 技能
+    direction: down
+    distance: 1000
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 技能
+        strategy: keyword
+        keyword: Skills
+        direction: down
+        distance: 1000
+        post_process:
+          - type: clean

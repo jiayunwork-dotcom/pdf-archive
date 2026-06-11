@@ -1,0 +1,136 @@
+type: notice
+display_name: 通知公告
+keywords:
+  - 通知
+  - 公告
+  - 通告
+  - 发文机关
+  - 文号
+  - 签发
+  - 印发
+  - 通知公告
+  - notice
+  - Notice
+  - NOTICE
+  - announcement
+  - Announcement
+  - circular
+  - Circular
+  - issued
+min_matches: 2
+extract_rules:
+  - field_name: 文号
+    description: 发文文号
+    strategy: regex
+    pattern: "文号[:：\\s]*([A-Za-z0-9〔〕\\[\\]()_-]{6,40})"
+    group_index: 1
+    required: true
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: 文号
+        strategy: regex
+        pattern: "([A-Za-z0-9〔〔〕\\[\\]]{2,20}[〔〔][0-9]{4}[〕〕][0-9]{1,10}号)"
+        group_index: 1
+
+  - field_name: notice_no
+    description: 归档用文号
+    strategy: regex
+    pattern: "文号[:：\\s]*([A-Za-z0-9〔〕\\[\\]()_-]{6,40})"
+    group_index: 1
+    post_process:
+      - type: trim
+      - type: sanitize_filename
+    alternatives:
+      - field_name: notice_no
+        strategy: regex
+        pattern: "([A-Za-z0-9〔〔〕\\[\\]]{2,20}[〔〔][0-9]{4}[〕〕][0-9]{1,10}号)"
+        group_index: 1
+        post_process:
+          - type: sanitize_filename
+
+  - field_name: 发文机关
+    description: 发文机关名称
+    strategy: keyword
+    keyword: 发文机关
+    direction: right
+    distance: 300
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 发文机关
+        strategy: keyword
+        keyword: Issuer
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: vendor_name
+    description: 归档用发文机关
+    strategy: keyword
+    keyword: 发文机关
+    direction: right
+    distance: 300
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+    alternatives:
+      - field_name: vendor_name
+        strategy: keyword
+        keyword: Issuer
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+          - type: sanitize_filename
+
+  - field_name: 签发日期
+    description: 签发日期
+    strategy: regex
+    pattern: "签发日期[:：\\s]*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{0,2}日?)"
+    group_index: 1
+    required: true
+    post_process:
+      - type: date_format
+    alternatives:
+      - field_name: 签发日期
+        strategy: regex
+        pattern: "印发日期[:：\\s]*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{0,2}日?)"
+        group_index: 1
+        post_process:
+          - type: date_format
+      - field_name: 签发日期
+        strategy: regex
+        pattern: "(?i)issue[ed]*[\\s_-]?date[:：\\s]*(\\d{4}[-/.]\\d{1,2}[-/.]\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: date_format
+
+  - field_name: 标题
+    description: 通知标题
+    strategy: first_line
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 标题
+        strategy: keyword
+        keyword: 关于
+        direction: right
+        distance: 500
+        post_process:
+          - type: clean
+
+  - field_name: year
+    description: 归档用年份
+    strategy: regex
+    pattern: "(\\d{4})[-/年]\\d{1,2}"
+    group_index: 1
+
+  - field_name: month
+    description: 归档用月份
+    strategy: regex
+    pattern: "\\d{4}[-/年](\\d{1,2})"
+    group_index: 1
+    post_process:
+      - type: pad_zero

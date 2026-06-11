@@ -1,0 +1,182 @@
+type: contract
+display_name: 合同
+keywords:
+  - 合同
+  - 甲方
+  - 乙方
+  - 合同编号
+  - 签订日期
+  - 签字日期
+  - 违约责任
+  - 权利义务
+  - contract
+  - Contract
+  - CONTRACT
+  - Agreement
+  - Party
+  - party
+  - signature
+min_matches: 2
+extract_rules:
+  - field_name: 合同编号
+    description: 合同编号
+    strategy: regex
+    pattern: "合同编号[:：\\s]*([A-Za-z0-9_-]{6,30})"
+    group_index: 1
+    required: true
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: 合同编号
+        strategy: regex
+        pattern: "(?i)contract[\\s_-]?no\\.?[:：\\s]*([A-Za-z0-9_-]{6,30})"
+        group_index: 1
+      - field_name: 合同编号
+        strategy: regex
+        pattern: "(?i)no\\.?[:：\\s]*([A-Z]{2,5}[0-9_-]{6,20})"
+        group_index: 1
+
+  - field_name: contract_no
+    description: 归档用合同号
+    strategy: regex
+    pattern: "合同编号[:：\\s]*([A-Za-z0-9_-]{6,30})"
+    group_index: 1
+    post_process:
+      - type: trim
+    alternatives:
+      - field_name: contract_no
+        strategy: regex
+        pattern: "(?i)contract[\\s_-]?no\\.?[:：\\s]*([A-Za-z0-9_-]{6,30})"
+        group_index: 1
+
+  - field_name: 甲方
+    description: 甲方名称
+    strategy: keyword
+    keyword: 甲方
+    direction: any
+    distance: 300
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 甲方
+        strategy: keyword
+        keyword: Party A
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: 乙方
+    description: 乙方名称
+    strategy: keyword
+    keyword: 乙方
+    direction: any
+    distance: 300
+    post_process:
+      - type: clean
+    alternatives:
+      - field_name: 乙方
+        strategy: keyword
+        keyword: Party B
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+
+  - field_name: 签订日期
+    description: 合同签订日期
+    strategy: regex
+    pattern: "签订日期[:：\\s]*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{0,2}日?)"
+    group_index: 1
+    required: true
+    post_process:
+      - type: date_format
+    alternatives:
+      - field_name: 签订日期
+        strategy: regex
+        pattern: "签字日期[:：\\s]*(\\d{4}[-/年]\\d{1,2}[-/月]\\d{0,2}日?)"
+        group_index: 1
+        post_process:
+          - type: date_format
+      - field_name: 签订日期
+        strategy: regex
+        pattern: "(?i)sign[ed]*[\\s_-]?date[:：\\s]*(\\d{4}[-/.]\\d{1,2}[-/.]\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: date_format
+      - field_name: 签订日期
+        strategy: regex
+        pattern: "(?i)date[:：\\s]*(\\d{4}[-/.]\\d{1,2}[-/.]\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: date_format
+
+  - field_name: 合同金额
+    description: 合同总金额
+    strategy: keyword
+    keyword: 合同金额
+    direction: any
+    distance: 200
+    post_process:
+      - type: amount_number
+    alternatives:
+      - field_name: 合同金额
+        strategy: keyword
+        keyword: 总金额
+        direction: right
+        distance: 200
+        post_process:
+          - type: amount_number
+      - field_name: 合同金额
+        strategy: keyword
+        keyword: Amount
+        direction: right
+        distance: 200
+        post_process:
+          - type: amount_number
+      - field_name: 合同金额
+        strategy: regex
+        pattern: "(?i)amount[:：\\s]*[¥￥$]?\\s*([\\d,]+\\.?\\d{0,2})"
+        group_index: 1
+        post_process:
+          - type: amount_number
+
+  - field_name: vendor_name
+    description: 归档用甲方名称
+    strategy: keyword
+    keyword: 甲方
+    direction: any
+    distance: 300
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+    alternatives:
+      - field_name: vendor_name
+        strategy: keyword
+        keyword: Party A
+        direction: right
+        distance: 300
+        post_process:
+          - type: clean
+          - type: sanitize_filename
+
+  - field_name: contract_title
+    description: 合同标题
+    strategy: first_line
+    post_process:
+      - type: clean
+      - type: sanitize_filename
+
+  - field_name: year
+    description: 归档用年份
+    strategy: regex
+    pattern: "(\\d{4})[-/年]\\d{1,2}"
+    group_index: 1
+
+  - field_name: month
+    description: 归档用月份
+    strategy: regex
+    pattern: "\\d{4}[-/年](\\d{1,2})"
+    group_index: 1
+    post_process:
+      - type: pad_zero
