@@ -417,6 +417,51 @@ func (s *Storage) UpdateTags(fileID, tags string) error {
 	return err
 }
 
+func (s *Storage) DeleteField(fileID, fieldName string) error {
+	row := s.db.QueryRow(`SELECT fields_json FROM documents WHERE file_id = ?`, fileID)
+	var fieldsJSON string
+	if err := row.Scan(&fieldsJSON); err != nil {
+		return err
+	}
+	fields := make(map[string]models.ExtractedField)
+	if fieldsJSON != "" {
+		_ = json.Unmarshal([]byte(fieldsJSON), &fields)
+	}
+	delete(fields, fieldName)
+	updatedJSON, err := json.Marshal(fields)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`UPDATE documents SET fields_json = ? WHERE file_id = ?`, string(updatedJSON), fileID)
+	return err
+}
+
+func (s *Storage) GetDocument(fileID string) (*DoneDocument, error) {
+	row := s.db.QueryRow(`SELECT file_id, file_path, md5, doc_type, confidence, fields_json, archive_path, COALESCE(tags,'')
+		FROM documents WHERE file_id = ?`, fileID)
+	var d DoneDocument
+	var fieldsJSON string
+	var docType, archivePath sql.NullString
+	err := row.Scan(&d.FileID, &d.FilePath, &d.MD5, &docType, &d.Confidence, &fieldsJSON, &archivePath, &d.Tags)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if docType.Valid {
+		d.DocType = docType.String
+	}
+	if archivePath.Valid {
+		d.ArchivePath = archivePath.String
+	}
+	d.Fields = make(map[string]models.ExtractedField)
+	if fieldsJSON != "" {
+		_ = json.Unmarshal([]byte(fieldsJSON), &d.Fields)
+	}
+	return &d, nil
+}
+
 func (s *Storage) SetField(fileID, fieldName string, value interface{}) error {
 	row := s.db.QueryRow(`SELECT fields_json FROM documents WHERE file_id = ?`, fileID)
 	var fieldsJSON string

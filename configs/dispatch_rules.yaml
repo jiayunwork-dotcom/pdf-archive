@@ -1,3 +1,5 @@
+mode: first_match
+
 rules:
   - name: high_value_invoice
     priority: 10

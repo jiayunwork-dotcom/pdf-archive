@@ -3,6 +3,7 @@ package dispatcher
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -46,13 +47,24 @@ type Dispatcher struct {
 	store    *storage.Storage
 	archiver *archiver.Archiver
 	rules    []models.DispatchRuleConfig
+	mode     string
 	dryRun   bool
+	rollback bool
 }
 
-func New(cfg *config.Config, store *storage.Storage, rulesPath string, dryRun bool) (*Dispatcher, error) {
-	rules, err := LoadRules(rulesPath)
+func New(cfg *config.Config, store *storage.Storage, rulesPath string, dryRun bool, rollback bool) (*Dispatcher, error) {
+	rc, err := LoadRulesConfig(rulesPath)
 	if err != nil {
 		return nil, fmt.Errorf("加载规则配置失败: %w", err)
+	}
+
+	rules := rc.Rules
+	mode := rc.Mode
+	if mode == "" {
+		mode = "first_match"
+	}
+	if mode != "first_match" && mode != "chain" {
+		return nil, fmt.Errorf("不合法的mode值'%s', 必须为first_match或chain", mode)
 	}
 
 	allFields := buildKnownFields(cfg)
@@ -60,7 +72,12 @@ func New(cfg *config.Config, store *storage.Storage, rulesPath string, dryRun bo
 		knownFields[k] = true
 	}
 
-	if errs := ValidateRules(rules); len(errs) > 0 {
+	errs := ValidateRules(rules, mode)
+	warns := ValidateRulesWarnings(rules, mode)
+	for _, w := range warns {
+		log.Printf("[WARN] 规则校验警告: %s", w)
+	}
+	if len(errs) > 0 {
 		return nil, fmt.Errorf("规则校验失败:\n  %s", strings.Join(errs, "\n  "))
 	}
 
@@ -73,11 +90,21 @@ func New(cfg *config.Config, store *storage.Storage, rulesPath string, dryRun bo
 		store:    store,
 		archiver: archiver.New(cfg),
 		rules:    rules,
+		mode:     mode,
 		dryRun:   dryRun,
+		rollback: rollback,
 	}, nil
 }
 
 func LoadRules(path string) ([]models.DispatchRuleConfig, error) {
+	rc, err := LoadRulesConfig(path)
+	if err != nil {
+		return nil, err
+	}
+	return rc.Rules, nil
+}
+
+func LoadRulesConfig(path string) (*models.DispatchRulesConfig, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
@@ -86,7 +113,7 @@ func LoadRules(path string) ([]models.DispatchRuleConfig, error) {
 	if err := yaml.Unmarshal(data, &rc); err != nil {
 		return nil, fmt.Errorf("解析YAML失败: %w", err)
 	}
-	return rc.Rules, nil
+	return &rc, nil
 }
 
 func buildKnownFields(cfg *config.Config) map[string]bool {
@@ -99,7 +126,7 @@ func buildKnownFields(cfg *config.Config) map[string]bool {
 	return fields
 }
 
-func ValidateRules(rules []models.DispatchRuleConfig) []string {
+func ValidateRules(rules []models.DispatchRuleConfig, mode string) []string {
 	var errs []string
 	for i, rule := range rules {
 		if rule.Name == "" {
@@ -109,6 +136,51 @@ func ValidateRules(rules []models.DispatchRuleConfig) []string {
 		errs = append(errs, validateActions(rule.Name, rule.Actions)...)
 	}
 	return errs
+}
+
+func ValidateRulesWarnings(rules []models.DispatchRuleConfig, mode string) []string {
+	var warns []string
+
+	priorityMap := make(map[int][]string)
+	for _, rule := range rules {
+		priorityMap[rule.Priority] = append(priorityMap[rule.Priority], rule.Name)
+	}
+	for p, names := range priorityMap {
+		if len(names) > 1 {
+			warns = append(warns, fmt.Sprintf("优先级冲突: 规则 %s 具有相同优先级 %d", strings.Join(names, ","), p))
+		}
+	}
+
+	if mode == "chain" {
+		for i, r1 := range rules {
+			for j, r2 := range rules {
+				if i >= j {
+					continue
+				}
+				r1HasMove := false
+				r1MoveTarget := ""
+				for _, a := range r1.Actions {
+					if a.Type == "move_to" {
+						r1HasMove = true
+						r1MoveTarget = a.Target
+					}
+				}
+				r2HasMove := false
+				r2MoveTarget := ""
+				for _, a := range r2.Actions {
+					if a.Type == "move_to" {
+						r2HasMove = true
+						r2MoveTarget = a.Target
+					}
+				}
+				if r1HasMove && r2HasMove && r1MoveTarget != r2MoveTarget {
+					warns = append(warns, fmt.Sprintf("chain模式冲突: 规则'%s'和'%s'都有move_to但target不同('%s' vs '%s')", r1.Name, r2.Name, r1MoveTarget, r2MoveTarget))
+				}
+			}
+		}
+	}
+
+	return warns
 }
 
 func validateConditions(ruleName string, conditions []models.DispatchCondition) []string {
@@ -167,6 +239,20 @@ func validateActions(ruleName string, actions []models.DispatchAction) []string 
 
 func validateValue(ruleName string, idx int, op string, val interface{}) []string {
 	var errs []string
+
+	if strVal, ok := val.(string); ok && strings.HasPrefix(strVal, "$") {
+		refPath := strVal[1:]
+		if refPath == "" {
+			errs = append(errs, fmt.Sprintf("规则'%s'条件#%d: 变量引用$后不能为空", ruleName, idx))
+			return errs
+		}
+		validVarRef := regexp.MustCompile(`^[a-zA-Z0-9_]+(\.[a-zA-Z0-9_]+)*$`)
+		if !validVarRef.MatchString(refPath) {
+			errs = append(errs, fmt.Sprintf("规则'%s'条件#%d: 变量引用路径'%s'格式不合法,只允许字母数字下划线和点号", ruleName, idx, refPath))
+		}
+		return errs
+	}
+
 	switch op {
 	case "between":
 		arr, ok := val.([]interface{})
@@ -220,11 +306,15 @@ func (d *Dispatcher) Run(opts DispatchOptions) (*models.DispatchSummary, error) 
 	}
 
 	if len(docs) == 0 {
-		return &models.DispatchSummary{}, nil
+		return &models.DispatchSummary{
+			RulesHitCount: make(map[string]int),
+		}, nil
 	}
 
 	summary := &models.DispatchSummary{
-		Details: make([]models.DispatchDocResult, 0, len(docs)),
+		Details:       make([]models.DispatchDocResult, 0, len(docs)),
+		RulesHitCount: make(map[string]int),
+		ErrorDetails:  make([]models.DispatchErrorDetail, 0),
 	}
 
 	hasDefaultRule := false
@@ -247,6 +337,8 @@ func (d *Dispatcher) Run(opts DispatchOptions) (*models.DispatchSummary, error) 
 		d.rules = append(d.rules, defaultRule)
 	}
 
+	totalActions := 0
+
 	for _, doc := range docs {
 		if opts.FilterType != "" && doc.DocType != opts.FilterType {
 			continue
@@ -254,32 +346,78 @@ func (d *Dispatcher) Run(opts DispatchOptions) (*models.DispatchSummary, error) 
 
 		ctx := d.buildContext(doc)
 
-		rule, matched := d.matchRules(ctx, opts.FilterRule)
-		if !matched {
-			for i := range d.rules {
-				if d.rules[i].Name == "default" {
-					rule = &d.rules[i]
-					break
-				}
+		var matchedRules []models.DispatchRuleConfig
+		if d.mode == "chain" {
+			matchedRules = d.matchRulesChain(ctx, opts.FilterRule)
+		} else {
+			if rule, matched := d.matchRulesFirstMatch(ctx, opts.FilterRule); matched {
+				matchedRules = []models.DispatchRuleConfig{*rule}
 			}
 		}
 
 		docResult := models.DispatchDocResult{
 			FileID:   doc.FileID,
 			FileName: filepath.Base(doc.FilePath),
-			Matched:  matched,
+			Matched:  len(matchedRules) > 0,
 		}
 
-		if rule != nil {
-			docResult.RuleName = rule.Name
-			actions := d.executeActions(*rule, doc, ctx)
-			docResult.Actions = actions
-			for _, a := range actions {
-				if a.Error != "" {
-					docResult.Errors = append(docResult.Errors, a.Error)
-					summary.Errors++
+		var allActions []models.DispatchActionResult
+		matchedRuleNames := make([]string, 0, len(matchedRules))
+
+		if len(matchedRules) > 0 {
+			for _, rule := range matchedRules {
+				matchedRuleNames = append(matchedRuleNames, rule.Name)
+				summary.RulesHitCount[rule.Name]++
+
+				actions := d.executeActions(rule, doc, ctx, matchedRuleNames)
+				allActions = append(allActions, actions...)
+
+				hasSkip := false
+				for _, a := range rule.Actions {
+					if a.Type == "skip" {
+						hasSkip = true
+						break
+					}
+				}
+				if hasSkip && d.mode == "chain" {
+					break
 				}
 			}
+		} else {
+			for i := range d.rules {
+				if d.rules[i].Name == "default" {
+					rule := d.rules[i]
+					matchedRuleNames = append(matchedRuleNames, rule.Name)
+					summary.RulesHitCount[rule.Name]++
+					actions := d.executeActions(rule, doc, ctx, matchedRuleNames)
+					allActions = append(allActions, actions...)
+					break
+				}
+			}
+		}
+
+		docResult.RuleNames = matchedRuleNames
+		docResult.Actions = allActions
+		totalActions += len(allActions)
+
+		hasError := false
+		for _, a := range allActions {
+			if a.Error != "" {
+				hasError = true
+				docResult.Errors = append(docResult.Errors, a.Error)
+				summary.Errors++
+				if len(summary.ErrorDetails) < 10 {
+					summary.ErrorDetails = append(summary.ErrorDetails, models.DispatchErrorDetail{
+						FileName:    docResult.FileName,
+						ActionType:  a.ActionType,
+						ErrorReason: a.Error,
+					})
+				}
+			}
+		}
+
+		if d.rollback && hasError && !d.dryRun {
+			d.executeRollback(doc, allActions)
 		}
 
 		if docResult.Matched {
@@ -292,6 +430,10 @@ func (d *Dispatcher) Run(opts DispatchOptions) (*models.DispatchSummary, error) 
 		summary.Details = append(summary.Details, docResult)
 	}
 
+	if summary.Total > 0 {
+		summary.AvgActionsPerDoc = float64(totalActions) / float64(summary.Total)
+	}
+
 	return summary, nil
 }
 
@@ -299,6 +441,13 @@ func (d *Dispatcher) buildContext(doc storage.DoneDocument) *models.DispatchDocC
 	fileSize := int64(0)
 	if fi, err := os.Stat(doc.FilePath); err == nil {
 		fileSize = fi.Size()
+	}
+
+	fieldsJSON := make(map[string]interface{})
+	for name, field := range doc.Fields {
+		if field.Value != nil {
+			fieldsJSON[name] = field.Value
+		}
 	}
 
 	ctx := &models.DispatchDocContext{
@@ -312,6 +461,7 @@ func (d *Dispatcher) buildContext(doc storage.DoneDocument) *models.DispatchDocC
 		Tags:        doc.Tags,
 		FileSize:    fileSize,
 		FileName:    filepath.Base(doc.FilePath),
+		FieldsJSON:  fieldsJSON,
 	}
 
 	if doc.ArchivePath != "" {
@@ -323,7 +473,7 @@ func (d *Dispatcher) buildContext(doc storage.DoneDocument) *models.DispatchDocC
 	return ctx
 }
 
-func (d *Dispatcher) matchRules(ctx *models.DispatchDocContext, filterRule string) (*models.DispatchRuleConfig, bool) {
+func (d *Dispatcher) matchRulesFirstMatch(ctx *models.DispatchDocContext, filterRule string) (*models.DispatchRuleConfig, bool) {
 	for i := range d.rules {
 		rule := &d.rules[i]
 		if filterRule != "" && rule.Name != filterRule && rule.Name != "default" {
@@ -337,6 +487,23 @@ func (d *Dispatcher) matchRules(ctx *models.DispatchDocContext, filterRule strin
 		}
 	}
 	return nil, false
+}
+
+func (d *Dispatcher) matchRulesChain(ctx *models.DispatchDocContext, filterRule string) []models.DispatchRuleConfig {
+	var matched []models.DispatchRuleConfig
+	for i := range d.rules {
+		rule := &d.rules[i]
+		if filterRule != "" && rule.Name != filterRule && rule.Name != "default" {
+			continue
+		}
+		if rule.Name == "default" {
+			continue
+		}
+		if d.matchConditions(rule.Conditions, ctx) {
+			matched = append(matched, *rule)
+		}
+	}
+	return matched
 }
 
 func (d *Dispatcher) matchConditions(conditions []models.DispatchCondition, ctx *models.DispatchDocContext) bool {
@@ -371,7 +538,41 @@ func (d *Dispatcher) matchOrGroup(conditions []models.DispatchCondition, ctx *mo
 
 func (d *Dispatcher) matchCondition(c models.DispatchCondition, ctx *models.DispatchDocContext) bool {
 	fieldVal := d.getFieldValue(c.Field, ctx)
-	return EvaluateCondition(c.Operator, c.Value, fieldVal)
+	resolvedValue := d.resolveConditionValue(c.Value, ctx)
+	if resolvedValue == nil {
+		return false
+	}
+	return EvaluateCondition(c.Operator, resolvedValue, fieldVal)
+}
+
+func (d *Dispatcher) resolveConditionValue(val interface{}, ctx *models.DispatchDocContext) interface{} {
+	strVal, ok := val.(string)
+	if !ok || !strings.HasPrefix(strVal, "$") {
+		return val
+	}
+
+	refPath := strVal[1:]
+	resolved := d.getNestedField(refPath, ctx.FieldsJSON)
+	if resolved == nil {
+		return nil
+	}
+	return resolved
+}
+
+func (d *Dispatcher) getNestedField(path string, fieldsJSON map[string]interface{}) interface{} {
+	parts := strings.Split(path, ".")
+	var current interface{} = fieldsJSON
+	for _, part := range parts {
+		m, ok := current.(map[string]interface{})
+		if !ok {
+			return nil
+		}
+		current, ok = m[part]
+		if !ok {
+			return nil
+		}
+	}
+	return current
 }
 
 func (d *Dispatcher) getFieldValue(field string, ctx *models.DispatchDocContext) string {
@@ -534,27 +735,27 @@ func toString(v interface{}) string {
 	}
 }
 
-func (d *Dispatcher) executeActions(rule models.DispatchRuleConfig, doc storage.DoneDocument, ctx *models.DispatchDocContext) []models.DispatchActionResult {
+func (d *Dispatcher) executeActions(rule models.DispatchRuleConfig, doc storage.DoneDocument, ctx *models.DispatchDocContext, matchedRuleNames []string) []models.DispatchActionResult {
 	var results []models.DispatchActionResult
 	for _, action := range rule.Actions {
-		result := d.executeAction(action, doc, ctx)
+		result := d.executeAction(action, doc, ctx, matchedRuleNames)
 		results = append(results, result)
 	}
 	return results
 }
 
-func (d *Dispatcher) executeAction(action models.DispatchAction, doc storage.DoneDocument, ctx *models.DispatchDocContext) models.DispatchActionResult {
+func (d *Dispatcher) executeAction(action models.DispatchAction, doc storage.DoneDocument, ctx *models.DispatchDocContext, matchedRuleNames []string) models.DispatchActionResult {
 	switch action.Type {
 	case "move_to":
-		return d.actionMoveTo(action, doc, ctx)
+		return d.actionMoveTo(action, doc, ctx, matchedRuleNames)
 	case "copy_to":
-		return d.actionCopyTo(action, doc, ctx)
+		return d.actionCopyTo(action, doc, ctx, matchedRuleNames)
 	case "tag":
-		return d.actionTag(action, doc)
+		return d.actionTag(action, doc, matchedRuleNames)
 	case "notify":
-		return d.actionNotify(action, doc)
+		return d.actionNotify(action, doc, matchedRuleNames)
 	case "set_field":
-		return d.actionSetField(action, doc)
+		return d.actionSetField(action, doc, matchedRuleNames)
 	case "skip":
 		return models.DispatchActionResult{
 			ActionType: "skip",
@@ -568,22 +769,27 @@ func (d *Dispatcher) executeAction(action models.DispatchAction, doc storage.Don
 	}
 }
 
-func (d *Dispatcher) actionMoveTo(action models.DispatchAction, doc storage.DoneDocument, ctx *models.DispatchDocContext) models.DispatchActionResult {
-	targetPath, err := d.resolvePath(action.Target, ctx)
+func (d *Dispatcher) actionMoveTo(action models.DispatchAction, doc storage.DoneDocument, ctx *models.DispatchDocContext, matchedRuleNames []string) models.DispatchActionResult {
+	targetPath, err := d.resolvePath(action.Target, ctx, matchedRuleNames)
 	if err != nil {
 		return models.DispatchActionResult{ActionType: "move_to", Error: fmt.Sprintf("解析路径失败: %v", err)}
+	}
+
+	srcPath := doc.ArchivePath
+	if srcPath == "" {
+		srcPath = doc.FilePath
 	}
 
 	if d.dryRun {
 		return models.DispatchActionResult{
 			ActionType: "move_to",
 			Detail:     fmt.Sprintf("[DRY RUN] 将移动到: %s", targetPath),
+			RollbackInfo: &models.RollbackInfo{
+				ActionType:   "move_to",
+				OriginalPath: srcPath,
+				TargetPath:   targetPath,
+			},
 		}
-	}
-
-	srcPath := doc.ArchivePath
-	if srcPath == "" {
-		srcPath = doc.FilePath
 	}
 
 	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
@@ -610,25 +816,37 @@ func (d *Dispatcher) actionMoveTo(action models.DispatchAction, doc storage.Done
 		return models.DispatchActionResult{ActionType: "move_to", Detail: targetPath, Error: fmt.Sprintf("更新索引失败: %v", err)}
 	}
 
-	return models.DispatchActionResult{ActionType: "move_to", Detail: targetPath}
+	return models.DispatchActionResult{
+		ActionType: "move_to",
+		Detail:     targetPath,
+		RollbackInfo: &models.RollbackInfo{
+			ActionType:   "move_to",
+			OriginalPath: srcPath,
+			TargetPath:   targetPath,
+		},
+	}
 }
 
-func (d *Dispatcher) actionCopyTo(action models.DispatchAction, doc storage.DoneDocument, ctx *models.DispatchDocContext) models.DispatchActionResult {
-	targetPath, err := d.resolvePath(action.Target, ctx)
+func (d *Dispatcher) actionCopyTo(action models.DispatchAction, doc storage.DoneDocument, ctx *models.DispatchDocContext, matchedRuleNames []string) models.DispatchActionResult {
+	targetPath, err := d.resolvePath(action.Target, ctx, matchedRuleNames)
 	if err != nil {
 		return models.DispatchActionResult{ActionType: "copy_to", Error: fmt.Sprintf("解析路径失败: %v", err)}
+	}
+
+	srcPath := doc.ArchivePath
+	if srcPath == "" {
+		srcPath = doc.FilePath
 	}
 
 	if d.dryRun {
 		return models.DispatchActionResult{
 			ActionType: "copy_to",
 			Detail:     fmt.Sprintf("[DRY RUN] 将复制到: %s", targetPath),
+			RollbackInfo: &models.RollbackInfo{
+				ActionType: "copy_to",
+				TargetPath: targetPath,
+			},
 		}
-	}
-
-	srcPath := doc.ArchivePath
-	if srcPath == "" {
-		srcPath = doc.FilePath
 	}
 
 	if _, err := os.Stat(srcPath); os.IsNotExist(err) {
@@ -648,10 +866,17 @@ func (d *Dispatcher) actionCopyTo(action models.DispatchAction, doc storage.Done
 		return models.DispatchActionResult{ActionType: "copy_to", Error: fmt.Sprintf("复制文件失败: %v", err)}
 	}
 
-	return models.DispatchActionResult{ActionType: "copy_to", Detail: targetPath}
+	return models.DispatchActionResult{
+		ActionType: "copy_to",
+		Detail:     targetPath,
+		RollbackInfo: &models.RollbackInfo{
+			ActionType: "copy_to",
+			TargetPath: targetPath,
+		},
+	}
 }
 
-func (d *Dispatcher) actionTag(action models.DispatchAction, doc storage.DoneDocument) models.DispatchActionResult {
+func (d *Dispatcher) actionTag(action models.DispatchAction, doc storage.DoneDocument, matchedRuleNames []string) models.DispatchActionResult {
 	if action.Tag == "" {
 		return models.DispatchActionResult{ActionType: "tag", Error: "tag动作未指定标签名"}
 	}
@@ -677,6 +902,10 @@ func (d *Dispatcher) actionTag(action models.DispatchAction, doc storage.DoneDoc
 		return models.DispatchActionResult{
 			ActionType: "tag",
 			Detail:     fmt.Sprintf("[DRY RUN] 将添加标签: %s -> %s", action.Tag, currentTags),
+			RollbackInfo: &models.RollbackInfo{
+				ActionType: "tag",
+				Tag:        action.Tag,
+			},
 		}
 	}
 
@@ -684,10 +913,17 @@ func (d *Dispatcher) actionTag(action models.DispatchAction, doc storage.DoneDoc
 		return models.DispatchActionResult{ActionType: "tag", Error: fmt.Sprintf("更新标签失败: %v", err)}
 	}
 
-	return models.DispatchActionResult{ActionType: "tag", Detail: fmt.Sprintf("添加标签: %s", action.Tag)}
+	return models.DispatchActionResult{
+		ActionType: "tag",
+		Detail:     fmt.Sprintf("添加标签: %s", action.Tag),
+		RollbackInfo: &models.RollbackInfo{
+			ActionType: "tag",
+			Tag:        action.Tag,
+		},
+	}
 }
 
-func (d *Dispatcher) actionNotify(action models.DispatchAction, doc storage.DoneDocument) models.DispatchActionResult {
+func (d *Dispatcher) actionNotify(action models.DispatchAction, doc storage.DoneDocument, matchedRuleNames []string) models.DispatchActionResult {
 	msg := action.Message
 	if msg == "" {
 		msg = fmt.Sprintf("文档 %s 触发通知", filepath.Base(doc.FilePath))
@@ -695,7 +931,7 @@ func (d *Dispatcher) actionNotify(action models.DispatchAction, doc storage.Done
 	return models.DispatchActionResult{ActionType: "notify", Detail: msg}
 }
 
-func (d *Dispatcher) actionSetField(action models.DispatchAction, doc storage.DoneDocument) models.DispatchActionResult {
+func (d *Dispatcher) actionSetField(action models.DispatchAction, doc storage.DoneDocument, matchedRuleNames []string) models.DispatchActionResult {
 	if action.Field == "" {
 		return models.DispatchActionResult{ActionType: "set_field", Error: "set_field动作未指定字段名"}
 	}
@@ -704,6 +940,10 @@ func (d *Dispatcher) actionSetField(action models.DispatchAction, doc storage.Do
 		return models.DispatchActionResult{
 			ActionType: "set_field",
 			Detail:     fmt.Sprintf("[DRY RUN] 将设置字段 %s = %s", action.Field, action.Value),
+			RollbackInfo: &models.RollbackInfo{
+				ActionType: "set_field",
+				FieldName:  action.Field,
+			},
 		}
 	}
 
@@ -711,10 +951,17 @@ func (d *Dispatcher) actionSetField(action models.DispatchAction, doc storage.Do
 		return models.DispatchActionResult{ActionType: "set_field", Error: fmt.Sprintf("设置字段失败: %v", err)}
 	}
 
-	return models.DispatchActionResult{ActionType: "set_field", Detail: fmt.Sprintf("设置 %s = %s", action.Field, action.Value)}
+	return models.DispatchActionResult{
+		ActionType: "set_field",
+		Detail:     fmt.Sprintf("设置 %s = %s", action.Field, action.Value),
+		RollbackInfo: &models.RollbackInfo{
+			ActionType: "set_field",
+			FieldName:  action.Field,
+		},
+	}
 }
 
-func (d *Dispatcher) resolvePath(template string, ctx *models.DispatchDocContext) (string, error) {
+func (d *Dispatcher) resolvePath(template string, ctx *models.DispatchDocContext, matchedRuleNames []string) (string, error) {
 	classResult := &models.ClassificationResult{
 		Type:       models.DocType(ctx.DocType),
 		Confidence: ctx.Confidence,
@@ -728,12 +975,46 @@ func (d *Dispatcher) resolvePath(template string, ctx *models.DispatchDocContext
 		variables["month"] = "unknown"
 	}
 
+	for name, field := range ctx.Fields {
+		if field.Value == nil {
+			continue
+		}
+		if _, ok := variables[name]; !ok {
+			variables[name] = fmt.Sprintf("%v", field.Value)
+		}
+	}
+
+	variables["tags"] = ctx.Tags
+	variables["matched_rules"] = strings.Join(matchedRuleNames, ",")
+
 	varRe := regexp.MustCompile(`\{([^}]+)\}`)
 	result := varRe.ReplaceAllStringFunc(template, func(m string) string {
 		name := strings.TrimSuffix(strings.TrimPrefix(m, "{"), "}")
 		name = strings.TrimSpace(name)
 		if v, ok := variables[name]; ok && v != "" {
 			return v
+		}
+
+		if strings.Contains(name, ".") {
+			parts := strings.Split(name, ".")
+			var current interface{} = ctx.FieldsJSON
+			for _, part := range parts {
+				m, ok := current.(map[string]interface{})
+				if !ok {
+					return ""
+				}
+				current, ok = m[part]
+				if !ok {
+					return ""
+				}
+			}
+			if current != nil {
+				return fmt.Sprintf("%v", current)
+			}
+		} else {
+			if v, ok := ctx.FieldsJSON[name]; ok && v != nil {
+				return fmt.Sprintf("%v", v)
+			}
 		}
 		return ""
 	})
@@ -746,6 +1027,68 @@ func (d *Dispatcher) resolvePath(template string, ctx *models.DispatchDocContext
 	}
 
 	return result, nil
+}
+
+func (d *Dispatcher) executeRollback(doc storage.DoneDocument, actions []models.DispatchActionResult) {
+	for i := len(actions) - 1; i >= 0; i-- {
+		a := actions[i]
+		if a.Error != "" || a.RollbackInfo == nil {
+			continue
+		}
+		ri := a.RollbackInfo
+		switch ri.ActionType {
+		case "move_to":
+			if ri.OriginalPath != "" && ri.TargetPath != "" {
+				if _, err := os.Stat(ri.TargetPath); err == nil {
+					if err := os.Rename(ri.TargetPath, ri.OriginalPath); err != nil {
+						log.Printf("[ROLLBACK] move_to回退失败: %s -> %s: %v", ri.TargetPath, ri.OriginalPath, err)
+					} else {
+						_ = d.store.UpdateArchivePath(doc.FileID, ri.OriginalPath)
+						log.Printf("[ROLLBACK] move_to回退成功: %s -> %s", ri.TargetPath, ri.OriginalPath)
+					}
+				}
+			}
+		case "copy_to":
+			if ri.TargetPath != "" {
+				if _, err := os.Stat(ri.TargetPath); err == nil {
+					if err := os.Remove(ri.TargetPath); err != nil {
+						log.Printf("[ROLLBACK] copy_to回退失败: 删除%s: %v", ri.TargetPath, err)
+					} else {
+						log.Printf("[ROLLBACK] copy_to回退成功: 删除%s", ri.TargetPath)
+					}
+				}
+			}
+		case "tag":
+			if ri.Tag != "" {
+				currentDoc, err := d.store.GetDocument(doc.FileID)
+				if err != nil || currentDoc == nil {
+					log.Printf("[ROLLBACK] tag回退失败: 获取文档失败: %v", err)
+					continue
+				}
+				existing := strings.Split(currentDoc.Tags, ",")
+				var newTags []string
+				for _, t := range existing {
+					if strings.TrimSpace(t) != ri.Tag {
+						newTags = append(newTags, strings.TrimSpace(t))
+					}
+				}
+				newTagStr := strings.Join(newTags, ",")
+				if err := d.store.UpdateTags(doc.FileID, newTagStr); err != nil {
+					log.Printf("[ROLLBACK] tag回退失败: 移除标签%s: %v", ri.Tag, err)
+				} else {
+					log.Printf("[ROLLBACK] tag回退成功: 移除标签%s", ri.Tag)
+				}
+			}
+		case "set_field":
+			if ri.FieldName != "" {
+				if err := d.store.DeleteField(doc.FileID, ri.FieldName); err != nil {
+					log.Printf("[ROLLBACK] set_field回退失败: 删除字段%s: %v", ri.FieldName, err)
+				} else {
+					log.Printf("[ROLLBACK] set_field回退成功: 删除字段%s", ri.FieldName)
+				}
+			}
+		}
+	}
 }
 
 func copyFileOp(src, dst string) error {

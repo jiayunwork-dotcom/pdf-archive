@@ -222,42 +222,62 @@ type DispatchAction struct {
 }
 
 type DispatchRulesConfig struct {
-	Rules []DispatchRuleConfig `yaml:"rules"`
+	Mode  string                `yaml:"mode,omitempty"`
+	Rules []DispatchRuleConfig  `yaml:"rules"`
 }
 
 type DispatchDocContext struct {
-	FileID     string
-	FilePath   string
-	MD5        string
-	DocType    string
-	Confidence float64
-	Fields     map[string]ExtractedField
+	FileID      string
+	FilePath    string
+	MD5         string
+	DocType     string
+	Confidence  float64
+	Fields      map[string]ExtractedField
 	ArchivePath string
-	Tags       string
-	FileSize   int64
-	PageCount  int
-	FileName   string
+	Tags        string
+	FileSize    int64
+	PageCount   int
+	FileName    string
+	FieldsJSON  map[string]interface{}
 }
 
 type DispatchActionResult struct {
 	ActionType string
 	Detail     string
 	Error      string
+	RollbackInfo *RollbackInfo
+}
+
+type RollbackInfo struct {
+	ActionType string
+	OriginalPath string
+	TargetPath   string
+	Tag         string
+	FieldName   string
 }
 
 type DispatchDocResult struct {
 	FileID       string
 	FileName     string
-	RuleName     string
+	RuleNames    []string
 	Matched      bool
 	Actions      []DispatchActionResult
 	Errors       []string
 }
 
+type DispatchErrorDetail struct {
+	FileName    string
+	ActionType  string
+	ErrorReason string
+}
+
 type DispatchSummary struct {
-	Total     int
-	Matched   int
-	Unmatched int
-	Errors    int
-	Details   []DispatchDocResult
+	Total            int
+	Matched          int
+	Unmatched        int
+	Errors           int
+	RulesHitCount    map[string]int
+	AvgActionsPerDoc float64
+	ErrorDetails     []DispatchErrorDetail
+	Details          []DispatchDocResult
 }

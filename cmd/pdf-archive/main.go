@@ -731,17 +731,18 @@ func printSummary(s *models.SummaryReport, elapsed time.Duration) {
 
 func dispatchCmd() *cobra.Command {
 	var (
-		rulesFile  string
-		dryRunFlag bool
-		filterType string
-		filterRule string
+		rulesFile     string
+		dryRunFlag    bool
+		filterType    string
+		filterRule    string
+		rollbackFlag  bool
 	)
 
 	cmd := &cobra.Command{
 		Use:   "dispatch",
 		Short: "按规则引擎分发文档",
 		Long: `读取YAML规则配置文件中定义的分发规则,对已索引的文档逐条匹配规则,命中的执行对应动作。
-支持 --dry-run 只匹配不执行, --filter-type 过滤文档类型, --filter-rule 指定规则名。`,
+支持 --dry-run 只匹配不执行, --filter-type 过滤文档类型, --filter-rule 指定规则名, --rollback 出错时回退已执行动作。`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := loadConfig()
 			if err != nil {
@@ -759,6 +760,13 @@ func dispatchCmd() *cobra.Command {
 			if dryRunFlag {
 				fmt.Println("🔍 DRY RUN模式 - 只匹配不执行动作")
 			}
+			if rollbackFlag {
+				if dryRunFlag {
+					fmt.Println("⚠️  --rollback在dry-run模式下无效")
+				} else {
+					fmt.Println("🔄 ROLLBACK模式 - 出错时回退已执行动作")
+				}
+			}
 			if filterType != "" {
 				fmt.Printf("📂 过滤文档类型: %s\n", filterType)
 			}
@@ -773,7 +781,7 @@ func dispatchCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			d, err := dispatcher.New(cfg, store, rulesFile, dryRunFlag)
+			d, err := dispatcher.New(cfg, store, rulesFile, dryRunFlag, rollbackFlag)
 			if err != nil {
 				return fmt.Errorf("初始化规则引擎失败: %w", err)
 			}
@@ -796,6 +804,7 @@ func dispatchCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&dryRunFlag, "dry-run", false, "只匹配规则不执行动作")
 	cmd.Flags().StringVar(&filterType, "filter-type", "", "只处理指定文档类型")
 	cmd.Flags().StringVar(&filterRule, "filter-rule", "", "只应用指定名称的规则")
+	cmd.Flags().BoolVar(&rollbackFlag, "rollback", false, "出错时回退已执行的动作")
 	return cmd
 }
 
@@ -811,19 +820,36 @@ func printDispatchResult(s *models.DispatchSummary, isDryRun bool) {
 	fmt.Printf("   ✅ 命中规则: %d\n", s.Matched)
 	fmt.Printf("   ⏭️  未命中:   %d\n", s.Unmatched)
 	fmt.Printf("   ❌ 错误:     %d\n", s.Errors)
+	fmt.Printf("   📈 平均动作数: %.2f\n", s.AvgActionsPerDoc)
 	fmt.Println()
+
+	if len(s.RulesHitCount) > 0 {
+		fmt.Println("📊 规则命中统计:")
+		for name, count := range s.RulesHitCount {
+			fmt.Printf("   %-30s: %d 次\n", name, count)
+		}
+		fmt.Println()
+	}
+
+	if len(s.ErrorDetails) > 0 {
+		fmt.Println("❌ 错误明细:")
+		for _, e := range s.ErrorDetails {
+			fmt.Printf("   %s | %s | %s\n", e.FileName, e.ActionType, e.ErrorReason)
+		}
+		fmt.Println()
+	}
 
 	if len(s.Details) > 0 {
 		fmt.Printf("📋 匹配明细%s:\n", mode)
-		fmt.Printf("   %-30s  %-20s  %-10s  %s\n", "文件名", "命中规则", "状态", "动作/错误")
-		fmt.Printf("   %s\n", strings.Repeat("─", 100))
+		fmt.Printf("   %-30s  %-25s  %-10s  %s\n", "文件名", "命中规则", "状态", "动作/错误")
+		fmt.Printf("   %s\n", strings.Repeat("─", 110))
 
 		for _, d := range s.Details {
 			status := "✅ 命中"
 			if !d.Matched {
 				status = "⏭️  未命中"
 			}
-			ruleName := d.RuleName
+			ruleName := strings.Join(d.RuleNames, ",")
 			if ruleName == "" {
 				ruleName = "-"
 			}
@@ -847,7 +873,10 @@ func printDispatchResult(s *models.DispatchSummary, isDryRun bool) {
 			if len(fileName) > 28 {
 				fileName = fileName[:25] + "..."
 			}
-			fmt.Printf("   %-30s  %-20s  %-10s  %s\n", fileName, ruleName, status, actionInfo)
+			if len(ruleName) > 23 {
+				ruleName = ruleName[:20] + "..."
+			}
+			fmt.Printf("   %-30s  %-25s  %-10s  %s\n", fileName, ruleName, status, actionInfo)
 		}
 	}
 }
